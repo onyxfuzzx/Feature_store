@@ -1,0 +1,318 @@
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.api.deps import require_roles, get_current_user
+from app.core import roles
+from app.db.models.core import User
+from app.db.models.feature_store import (
+    FeatureDefinition,
+    FeatureGroup,
+    FeatureMaterialization,
+    FeatureLineage,
+    FeatureValueOnline,
+    FeatureValueOffline,
+)
+from app.db.session import get_db
+from app.schemas.feature_store import (
+    FeatureDefinitionCreate,
+    FeatureDefinitionOut,
+    FeatureDefinitionUpdate,
+    FeatureGroupCreate,
+    FeatureGroupOut,
+    FeatureMaterializationOut,
+    FeatureLineageCreate,
+    FeatureLineageOut,
+    FeatureValueOut,
+)
+from app.services.materialization import materialize_feature
+from app.services.audit import log_audit
+
+
+router = APIRouter(prefix="/features", tags=["features"])
+
+
+@router.get(
+    "/groups",
+    response_model=list[FeatureGroupOut],
+    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+)
+def list_feature_groups(db: Session = Depends(get_db)):
+    return db.query(FeatureGroup).order_by(FeatureGroup.created_at.desc()).all()
+
+
+@router.post(
+    "/groups",
+    response_model=FeatureGroupOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST))],
+)
+def create_feature_group(
+    payload: FeatureGroupCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    group = FeatureGroup(
+        name=payload.name,
+        description=payload.description,
+        owner_id=payload.owner_id,
+        tags_json=payload.tags_json,
+        environment=payload.environment,
+    )
+    db.add(group)
+    db.commit()
+    db.refresh(group)
+    log_audit(
+        db=db,
+        actor_id=current_user.id,
+        action="CREATE_FEATURE_GROUP",
+        entity_type="feature_group",
+        entity_id=group.id,
+        payload={"name": group.name, "description": group.description},
+    )
+    return group
+
+
+@router.get(
+    "",
+    response_model=list[FeatureDefinitionOut],
+    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+)
+def list_features(db: Session = Depends(get_db)):
+    return db.query(FeatureDefinition).order_by(FeatureDefinition.created_at.desc()).all()
+
+
+@router.post(
+    "",
+    response_model=FeatureDefinitionOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST))],
+)
+def create_feature(
+    payload: FeatureDefinitionCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    group = db.get(FeatureGroup, payload.group_id)
+    if not group:
+        raise HTTPException(status_code=404, detail="Feature group not found")
+
+    feature = FeatureDefinition(
+        group_id=payload.group_id,
+        name=payload.name,
+        dtype=payload.dtype,
+        description=payload.description,
+        source_sql=payload.source_sql,
+        refresh_interval=payload.refresh_interval,
+        status=payload.status,
+        validation_rules_json=payload.validation_rules_json,
+    )
+    db.add(feature)
+    db.commit()
+    db.refresh(feature)
+    log_audit(
+        db=db,
+        actor_id=current_user.id,
+        action="CREATE_FEATURE",
+        entity_type="feature_definition",
+        entity_id=feature.id,
+        payload={"name": feature.name, "dtype": feature.dtype, "status": feature.status},
+    )
+    return feature
+
+
+@router.get(
+    "/{feature_id}",
+    response_model=FeatureDefinitionOut,
+    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+)
+def get_feature(feature_id: UUID, db: Session = Depends(get_db)):
+    feature = db.get(FeatureDefinition, feature_id)
+    if not feature:
+        raise HTTPException(status_code=404, detail="Feature not found")
+    return feature
+
+
+@router.post(
+    "/{feature_id}/materialize",
+    response_model=FeatureMaterializationOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER))],
+)
+def materialize(
+    feature_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    run = materialize_feature(db, feature_id)
+    log_audit(
+        db=db,
+        actor_id=current_user.id,
+        action="MATERIALIZE_FEATURE",
+        entity_type="feature_definition",
+        entity_id=feature_id,
+        payload={"materialization_id": str(run.id), "status": run.status, "row_count": run.row_count},
+    )
+    return run
+
+
+@router.get(
+    "/{feature_id}/materializations",
+    response_model=list[FeatureMaterializationOut],
+    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+)
+def list_materializations(feature_id: UUID, db: Session = Depends(get_db)):
+    feature = db.get(FeatureDefinition, feature_id)
+    if not feature:
+        raise HTTPException(status_code=404, detail="Feature not found")
+
+    return (
+        db.query(FeatureMaterialization)
+        .filter(FeatureMaterialization.feature_id == feature_id)
+        .order_by(FeatureMaterialization.started_at.desc())
+        .all()
+    )
+
+
+@router.get(
+    "/{feature_id}/values",
+    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+)
+def get_feature_values(feature_id: UUID, db: Session = Depends(get_db)):
+    feature = db.get(FeatureDefinition, feature_id)
+    if not feature:
+        raise HTTPException(status_code=404, detail="Feature not found")
+
+    online_vals = (
+        db.query(FeatureValueOnline)
+        .filter(FeatureValueOnline.feature_id == feature_id)
+        .limit(100)
+        .all()
+    )
+    offline_vals = (
+        db.query(FeatureValueOffline)
+        .filter(FeatureValueOffline.feature_id == feature_id)
+        .order_by(FeatureValueOffline.event_time.desc())
+        .limit(100)
+        .all()
+    )
+
+    return {
+        "online": [
+            {
+                "entity_key": v.entity_key,
+                "feature_id": v.feature_id,
+                "value": v.value,
+                "event_time": v.event_time.isoformat() if v.event_time else None,
+                "updated_at": v.updated_at.isoformat(),
+            }
+            for v in online_vals
+        ],
+        "offline": [
+            {
+                "entity_key": v.entity_key,
+                "feature_id": v.feature_id,
+                "value": v.value,
+                "event_time": v.event_time.isoformat(),
+                "updated_at": v.updated_at.isoformat(),
+            }
+            for v in offline_vals
+        ],
+    }
+
+
+@router.post(
+    "/{feature_id}/lineage",
+    response_model=FeatureLineageOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST))],
+)
+def create_feature_lineage(
+    feature_id: UUID,
+    payload: FeatureLineageCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    feature = db.get(FeatureDefinition, feature_id)
+    if not feature:
+        raise HTTPException(status_code=404, detail="Feature not found")
+
+    lineage = FeatureLineage(
+        feature_id=feature_id,
+        source_table=payload.source_table,
+        source_columns_json=payload.source_columns_json,
+    )
+    db.add(lineage)
+    db.commit()
+    db.refresh(lineage)
+
+    log_audit(
+        db=db,
+        actor_id=current_user.id,
+        action="ADD_FEATURE_LINEAGE",
+        entity_type="feature_definition",
+        entity_id=feature_id,
+        payload={"source_table": lineage.source_table},
+    )
+
+    return lineage
+
+
+@router.get(
+    "/{feature_id}/lineage",
+    response_model=list[FeatureLineageOut],
+    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+)
+def list_feature_lineage(feature_id: UUID, db: Session = Depends(get_db)):
+    feature = db.get(FeatureDefinition, feature_id)
+    if not feature:
+        raise HTTPException(status_code=404, detail="Feature not found")
+
+    return (
+        db.query(FeatureLineage)
+        .filter(FeatureLineage.feature_id == feature_id)
+        .order_by(FeatureLineage.created_at.desc())
+        .all()
+    )
+
+
+@router.put(
+    "/{feature_id}",
+    response_model=FeatureDefinitionOut,
+    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST))],
+)
+def update_feature(
+    feature_id: UUID,
+    payload: FeatureDefinitionUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    feature = db.get(FeatureDefinition, feature_id)
+    if not feature:
+        raise HTTPException(status_code=404, detail="Feature not found")
+
+    if payload.description is not None:
+        feature.description = payload.description
+    if payload.status is not None:
+        feature.status = payload.status
+    if payload.refresh_interval is not None:
+        feature.refresh_interval = payload.refresh_interval
+    if payload.validation_rules_json is not None:
+        feature.validation_rules_json = payload.validation_rules_json
+
+    db.commit()
+    db.refresh(feature)
+
+    log_audit(
+        db=db,
+        actor_id=current_user.id,
+        action="UPDATE_FEATURE",
+        entity_type="feature_definition",
+        entity_id=feature.id,
+        payload={"name": feature.name, "status": feature.status},
+    )
+
+    return feature
+
+
