@@ -1,22 +1,13 @@
+import hashlib
 import uuid
 
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.models.core import Role, User, UserRole
-from app.db.session import get_db
-
-import hashlib
-from fastapi import Depends, HTTPException, status, Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, APIKeyHeader
-from jose import JWTError, jwt
-from sqlalchemy.orm import Session
-
-from app.core.config import settings
-from app.db.models.core import Role, User, UserRole, APIKey
+from app.db.models.core import APIKey, Role, User, UserRole
 from app.db.session import get_db
 
 security = HTTPBearer(auto_error=False)

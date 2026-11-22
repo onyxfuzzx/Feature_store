@@ -20,6 +20,7 @@ A production-ready, full-stack application designed for machine learning teams t
 7. [Role-Based Access Control (RBAC)](#role-based-access-control-rbac)
 8. [Programmatic API Keys Guide](#programmatic-api-keys-guide)
 9. [Database Migration Rules](#database-migration-rules)
+10. [Roadmap & Milestones](#roadmap--milestones)
 
 ---
 
@@ -305,3 +306,15 @@ This project was migrated from **Microsoft SQL Server 2022** to **Supabase Postg
 
 > [!IMPORTANT]
 > Always set your `DATABASE_URL` in `backend/.env` before running Alembic migrations or the seed script.
+
+---
+
+## Roadmap & Milestones
+
+For the full open-source roadmap, technical audit, and UI redesign plan, see [`milestone.md`](milestone.md).
+
+* **Milestone 1**: Core Feature Store Engine (Batch Online Retrieval, As-Of Offline Joins, Redis Adapter, Pytest Suite).
+* **Milestone 2**: Complete UI/UX Redesign (Tailwind CSS, shadcn/ui, TanStack Table & Query, Recharts, purge of AI-slop styles).
+* **Milestone 3**: Real Data Quality & Model Drift Engine (Active validation, Population Stability Index, S3/Supabase artifact storage).
+* **Milestone 4**: Developer Experience (Python Client SDK & CLI).
+* **Milestone 5**: Open-Source Packaging & Release (Apache 2.0, CI/CD, Documentation, one-command Docker compose).
