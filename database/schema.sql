@@ -1,204 +1,194 @@
-IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'core')
-    EXEC('CREATE SCHEMA core');
-IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'feature_store')
-    EXEC('CREATE SCHEMA feature_store');
-IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'model_registry')
-    EXEC('CREATE SCHEMA model_registry');
-IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'jobs')
-    EXEC('CREATE SCHEMA jobs');
-GO
+-- PostgreSQL schema for Feature Store & Model Registry
+-- Compatible with Supabase (PostgreSQL 15+)
 
-IF OBJECT_ID('core.users', 'U') IS NULL
-CREATE TABLE core.users (
-    id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    name NVARCHAR(120) NOT NULL,
-    email NVARCHAR(200) NOT NULL UNIQUE,
-    password_hash NVARCHAR(255) NOT NULL,
-    is_active BIT NOT NULL DEFAULT 1,
-    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+CREATE SCHEMA IF NOT EXISTS core;
+CREATE SCHEMA IF NOT EXISTS feature_store;
+CREATE SCHEMA IF NOT EXISTS model_registry;
+CREATE SCHEMA IF NOT EXISTS jobs;
+
+-- Enable UUID generation
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- core.users
+CREATE TABLE IF NOT EXISTS core.users (
+    id          UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    name        VARCHAR(120) NOT NULL,
+    email       VARCHAR(200) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-GO
 
-IF OBJECT_ID('core.roles', 'U') IS NULL
-CREATE TABLE core.roles (
-    id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    name NVARCHAR(80) NOT NULL UNIQUE
+-- core.roles
+CREATE TABLE IF NOT EXISTS core.roles (
+    id   UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    name VARCHAR(80) NOT NULL UNIQUE
 );
-GO
 
-IF OBJECT_ID('core.user_roles', 'U') IS NULL
-CREATE TABLE core.user_roles (
-    user_id UNIQUEIDENTIFIER NOT NULL,
-    role_id UNIQUEIDENTIFIER NOT NULL,
-    PRIMARY KEY (user_id, role_id),
-    CONSTRAINT fk_user_roles_user FOREIGN KEY (user_id) REFERENCES core.users(id),
-    CONSTRAINT fk_user_roles_role FOREIGN KEY (role_id) REFERENCES core.roles(id)
+-- core.user_roles
+CREATE TABLE IF NOT EXISTS core.user_roles (
+    user_id UUID NOT NULL REFERENCES core.users(id),
+    role_id UUID NOT NULL REFERENCES core.roles(id),
+    PRIMARY KEY (user_id, role_id)
 );
-GO
 
-IF OBJECT_ID('core.audit_log', 'U') IS NULL
-CREATE TABLE core.audit_log (
-    id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    actor_id UNIQUEIDENTIFIER NULL,
-    action NVARCHAR(120) NOT NULL,
-    entity_type NVARCHAR(120) NOT NULL,
-    entity_id NVARCHAR(120) NOT NULL,
-    payload_json NVARCHAR(MAX) NULL,
-    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-    CONSTRAINT fk_audit_log_actor FOREIGN KEY (actor_id) REFERENCES core.users(id)
+-- core.audit_log
+CREATE TABLE IF NOT EXISTS core.audit_log (
+    id          UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    actor_id    UUID REFERENCES core.users(id),
+    action      VARCHAR(120) NOT NULL,
+    entity_type VARCHAR(120) NOT NULL,
+    entity_id   VARCHAR(120) NOT NULL,
+    payload_json TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-GO
 
-IF OBJECT_ID('feature_store.feature_group', 'U') IS NULL
-CREATE TABLE feature_store.feature_group (
-    id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    name NVARCHAR(120) NOT NULL,
-    description NVARCHAR(500) NULL,
-    owner_id UNIQUEIDENTIFIER NULL,
-    tags_json NVARCHAR(MAX) NULL,
-    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-    CONSTRAINT fk_feature_group_owner FOREIGN KEY (owner_id) REFERENCES core.users(id)
+-- core.api_keys
+CREATE TABLE IF NOT EXISTS core.api_keys (
+    id         UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id    UUID NOT NULL REFERENCES core.users(id),
+    name       VARCHAR(120) NOT NULL,
+    key_hash   VARCHAR(255) NOT NULL UNIQUE,
+    is_active  BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-GO
 
-IF OBJECT_ID('feature_store.feature_definition', 'U') IS NULL
-CREATE TABLE feature_store.feature_definition (
-    id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    group_id UNIQUEIDENTIFIER NOT NULL,
-    name NVARCHAR(120) NOT NULL,
-    dtype NVARCHAR(40) NOT NULL,
-    description NVARCHAR(500) NULL,
-    source_sql NVARCHAR(MAX) NOT NULL,
-    refresh_interval NVARCHAR(40) NOT NULL,
-    status NVARCHAR(40) NOT NULL DEFAULT 'draft',
-    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-    CONSTRAINT fk_feature_definition_group FOREIGN KEY (group_id) REFERENCES feature_store.feature_group(id)
+-- feature_store.feature_group
+CREATE TABLE IF NOT EXISTS feature_store.feature_group (
+    id          UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    name        VARCHAR(120) NOT NULL,
+    description VARCHAR(500),
+    owner_id    UUID REFERENCES core.users(id),
+    tags_json   TEXT,
+    environment VARCHAR(40) NOT NULL DEFAULT 'dev',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-GO
 
-IF OBJECT_ID('feature_store.feature_lineage', 'U') IS NULL
-CREATE TABLE feature_store.feature_lineage (
-    id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    feature_id UNIQUEIDENTIFIER NOT NULL,
-    source_table NVARCHAR(200) NOT NULL,
-    source_columns_json NVARCHAR(MAX) NULL,
-    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-    CONSTRAINT fk_feature_lineage_feature FOREIGN KEY (feature_id) REFERENCES feature_store.feature_definition(id)
+-- feature_store.feature_definition
+CREATE TABLE IF NOT EXISTS feature_store.feature_definition (
+    id                   UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    group_id             UUID NOT NULL REFERENCES feature_store.feature_group(id),
+    name                 VARCHAR(120) NOT NULL,
+    dtype                VARCHAR(40) NOT NULL,
+    description          VARCHAR(500),
+    source_sql           TEXT NOT NULL,
+    refresh_interval     VARCHAR(40) NOT NULL,
+    status               VARCHAR(40) NOT NULL DEFAULT 'draft',
+    validation_rules_json TEXT,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-GO
 
-IF OBJECT_ID('feature_store.feature_materialization', 'U') IS NULL
-CREATE TABLE feature_store.feature_materialization (
-    id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    feature_id UNIQUEIDENTIFIER NOT NULL,
-    status NVARCHAR(40) NOT NULL,
-    started_at DATETIME2 NULL,
-    finished_at DATETIME2 NULL,
-    row_count INT NULL,
-    error_message NVARCHAR(MAX) NULL,
-    CONSTRAINT fk_feature_materialization_feature FOREIGN KEY (feature_id) REFERENCES feature_store.feature_definition(id)
+-- feature_store.feature_lineage
+CREATE TABLE IF NOT EXISTS feature_store.feature_lineage (
+    id                  UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    feature_id          UUID NOT NULL REFERENCES feature_store.feature_definition(id),
+    source_table        VARCHAR(200) NOT NULL,
+    source_columns_json TEXT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-GO
 
-IF OBJECT_ID('feature_store.feature_values_online', 'U') IS NULL
-CREATE TABLE feature_store.feature_values_online (
-    entity_key NVARCHAR(120) NOT NULL,
-    feature_id UNIQUEIDENTIFIER NOT NULL,
-    value NVARCHAR(MAX) NULL,
-    event_time DATETIME2 NULL,
-    updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-    PRIMARY KEY (entity_key, feature_id),
-    CONSTRAINT fk_feature_values_online_feature FOREIGN KEY (feature_id) REFERENCES feature_store.feature_definition(id)
+-- feature_store.feature_materialization
+CREATE TABLE IF NOT EXISTS feature_store.feature_materialization (
+    id            UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    feature_id    UUID NOT NULL REFERENCES feature_store.feature_definition(id),
+    status        VARCHAR(40) NOT NULL,
+    started_at    TIMESTAMPTZ,
+    finished_at   TIMESTAMPTZ,
+    row_count     INTEGER,
+    error_message TEXT
 );
-GO
 
-IF OBJECT_ID('feature_store.feature_values_offline', 'U') IS NULL
-CREATE TABLE feature_store.feature_values_offline (
-    entity_key NVARCHAR(120) NOT NULL,
-    feature_id UNIQUEIDENTIFIER NOT NULL,
-    value NVARCHAR(MAX) NULL,
-    event_time DATETIME2 NOT NULL,
-    updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-    PRIMARY KEY (entity_key, feature_id, event_time),
-    CONSTRAINT fk_feature_values_offline_feature FOREIGN KEY (feature_id) REFERENCES feature_store.feature_definition(id)
+-- feature_store.feature_values_online
+CREATE TABLE IF NOT EXISTS feature_store.feature_values_online (
+    entity_key VARCHAR(120) NOT NULL,
+    feature_id UUID NOT NULL REFERENCES feature_store.feature_definition(id),
+    value      TEXT,
+    event_time TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (entity_key, feature_id)
 );
-GO
 
-IF OBJECT_ID('model_registry.model', 'U') IS NULL
-CREATE TABLE model_registry.model (
-    id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    name NVARCHAR(120) NOT NULL,
-    description NVARCHAR(500) NULL,
-    owner_id UNIQUEIDENTIFIER NULL,
-    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-    CONSTRAINT fk_model_owner FOREIGN KEY (owner_id) REFERENCES core.users(id)
+-- feature_store.feature_values_offline
+CREATE TABLE IF NOT EXISTS feature_store.feature_values_offline (
+    entity_key VARCHAR(120) NOT NULL,
+    feature_id UUID NOT NULL REFERENCES feature_store.feature_definition(id),
+    event_time TIMESTAMPTZ NOT NULL,
+    value      TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (entity_key, feature_id, event_time)
 );
-GO
 
-IF OBJECT_ID('model_registry.model_version', 'U') IS NULL
-CREATE TABLE model_registry.model_version (
-    id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    model_id UNIQUEIDENTIFIER NOT NULL,
-    version NVARCHAR(40) NOT NULL,
-    stage NVARCHAR(40) NOT NULL DEFAULT 'Staging',
-    metrics_json NVARCHAR(MAX) NULL,
-    params_json NVARCHAR(MAX) NULL,
-    artifact_uri NVARCHAR(500) NULL,
-    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-    CONSTRAINT fk_model_version_model FOREIGN KEY (model_id) REFERENCES model_registry.model(id)
+-- feature_store.sample_events (seed data source)
+CREATE TABLE IF NOT EXISTS feature_store.sample_events (
+    customer_id VARCHAR(50) NOT NULL,
+    amount      NUMERIC(12, 2) NOT NULL,
+    event_time  TIMESTAMPTZ NOT NULL
 );
-GO
 
-IF OBJECT_ID('model_registry.model_lineage', 'U') IS NULL
-CREATE TABLE model_registry.model_lineage (
-    id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    model_version_id UNIQUEIDENTIFIER NOT NULL,
-    feature_ids_json NVARCHAR(MAX) NULL,
-    dataset_uri NVARCHAR(500) NULL,
-    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-    CONSTRAINT fk_model_lineage_version FOREIGN KEY (model_version_id) REFERENCES model_registry.model_version(id)
+-- model_registry.model
+CREATE TABLE IF NOT EXISTS model_registry.model (
+    id          UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    name        VARCHAR(120) NOT NULL,
+    description VARCHAR(500),
+    owner_id    UUID REFERENCES core.users(id),
+    environment VARCHAR(40) NOT NULL DEFAULT 'dev',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-GO
 
-IF OBJECT_ID('model_registry.model_stage_history', 'U') IS NULL
-CREATE TABLE model_registry.model_stage_history (
-    id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    model_version_id UNIQUEIDENTIFIER NOT NULL,
-    from_stage NVARCHAR(40) NOT NULL,
-    to_stage NVARCHAR(40) NOT NULL,
-    changed_by UNIQUEIDENTIFIER NULL,
-    changed_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-    CONSTRAINT fk_model_stage_history_version FOREIGN KEY (model_version_id) REFERENCES model_registry.model_version(id),
-    CONSTRAINT fk_model_stage_history_user FOREIGN KEY (changed_by) REFERENCES core.users(id)
+-- model_registry.model_version
+CREATE TABLE IF NOT EXISTS model_registry.model_version (
+    id           UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    model_id     UUID NOT NULL REFERENCES model_registry.model(id),
+    version      VARCHAR(40) NOT NULL,
+    stage        VARCHAR(40) NOT NULL DEFAULT 'Staging',
+    metrics_json TEXT,
+    params_json  TEXT,
+    artifact_uri VARCHAR(500),
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-GO
 
-IF OBJECT_ID('jobs.job_definition', 'U') IS NULL
-CREATE TABLE jobs.job_definition (
-    id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    name NVARCHAR(120) NOT NULL,
-    type NVARCHAR(60) NOT NULL,
-    cron NVARCHAR(60) NOT NULL,
-    payload_json NVARCHAR(MAX) NULL,
-    is_active BIT NOT NULL DEFAULT 1,
-    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+-- model_registry.model_lineage
+CREATE TABLE IF NOT EXISTS model_registry.model_lineage (
+    id               UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    model_version_id UUID NOT NULL REFERENCES model_registry.model_version(id),
+    feature_ids_json TEXT,
+    dataset_uri      VARCHAR(500),
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-GO
 
-IF OBJECT_ID('jobs.job_run', 'U') IS NULL
-CREATE TABLE jobs.job_run (
-    id UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    job_definition_id UNIQUEIDENTIFIER NOT NULL,
-    status NVARCHAR(40) NOT NULL,
-    started_at DATETIME2 NULL,
-    finished_at DATETIME2 NULL,
-    log NVARCHAR(MAX) NULL,
-    CONSTRAINT fk_job_run_job FOREIGN KEY (job_definition_id) REFERENCES jobs.job_definition(id)
+-- model_registry.model_stage_history
+CREATE TABLE IF NOT EXISTS model_registry.model_stage_history (
+    id               UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    model_version_id UUID NOT NULL REFERENCES model_registry.model_version(id),
+    from_stage       VARCHAR(40) NOT NULL,
+    to_stage         VARCHAR(40) NOT NULL,
+    changed_by       UUID REFERENCES core.users(id),
+    changed_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-GO
 
-CREATE INDEX idx_feature_definition_group ON feature_store.feature_definition (group_id);
-CREATE INDEX idx_feature_values_online_feature ON feature_store.feature_values_online (feature_id);
-CREATE INDEX idx_model_version_model ON model_registry.model_version (model_id);
-CREATE INDEX idx_job_run_job ON jobs.job_run (job_definition_id);
-GO
+-- jobs.job_definition
+CREATE TABLE IF NOT EXISTS jobs.job_definition (
+    id           UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    name         VARCHAR(120) NOT NULL,
+    type         VARCHAR(60) NOT NULL,
+    cron         VARCHAR(60) NOT NULL,
+    payload_json TEXT,
+    is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- jobs.job_run
+CREATE TABLE IF NOT EXISTS jobs.job_run (
+    id                UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    job_definition_id UUID NOT NULL REFERENCES jobs.job_definition(id),
+    status            VARCHAR(40) NOT NULL,
+    started_at        TIMESTAMPTZ,
+    finished_at       TIMESTAMPTZ,
+    log               TEXT
+);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_feature_definition_group ON feature_store.feature_definition (group_id);
+CREATE INDEX IF NOT EXISTS idx_feature_values_online_feature ON feature_store.feature_values_online (feature_id);
+CREATE INDEX IF NOT EXISTS idx_model_version_model ON model_registry.model_version (model_id);
+CREATE INDEX IF NOT EXISTS idx_job_run_job ON jobs.job_run (job_definition_id);

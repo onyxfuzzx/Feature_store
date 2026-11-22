@@ -7,19 +7,19 @@ A production-ready, full-stack application designed for machine learning teams t
 ## Table of Contents
 
 1. [Key Capabilities](#key-capabilities)
-2. [Architecture &amp; System Flow](#architecture--system-flow)
+2. [Architecture & System Flow](#architecture--system-flow)
 3. [Technology Stack](#technology-stack)
 4. [Project Structure](#project-structure)
 5. [Prerequisites](#prerequisites)
 6. [Quickstart Setup Guide](#quickstart-setup-guide)
-   - [1. Database Initialization (Docker + SQL Server)](#1-database-initialization-docker--sql-server)
+   - [1. Supabase Database Setup](#1-supabase-database-setup)
    - [2. Database Schema Creation (Alembic or SQL Script)](#2-database-schema-creation-alembic-or-sql-script)
-   - [3. Backend Configuration &amp; Launch](#3-backend-configuration--launch)
+   - [3. Backend Configuration & Launch](#3-backend-configuration--launch)
    - [4. Seed Mock Data](#4-seed-mock-data)
-   - [5. Frontend Configuration &amp; Launch](#5-frontend-configuration--launch)
+   - [5. Frontend Configuration & Launch](#5-frontend-configuration--launch)
 7. [Role-Based Access Control (RBAC)](#role-based-access-control-rbac)
 8. [Programmatic API Keys Guide](#programmatic-api-keys-guide)
-9. [Documentation Directory](#documentation-directory)
+9. [Database Migration Rules](#database-migration-rules)
 
 ---
 
@@ -27,8 +27,8 @@ A production-ready, full-stack application designed for machine learning teams t
 
 * **Feature Catalog & Schema**: Group features logically (e.g., `Payments`), define SQL-based transformations, choose data types, assign metadata tags, and track historical lineage.
 * **Dual-Storage Materialization Engine**:
-  * **Online Store**: Low-latency key-value serving table (`feature_values_online`) for real-time model inference.
-  * **Offline Store**: Partitioned time-series historical table (`feature_values_offline`) for training set generation and backtesting.
+  * **Online Store**: Low-latency key-value serving table (`feature_store.feature_values_online`) for real-time model inference.
+  * **Offline Store**: Partitioned time-series historical table (`feature_store.feature_values_offline`) for training set generation and backtesting.
 * **Model Registry & Stage Tracking**:
   * Register models with metadata description and owner relationships.
   * Track versions with custom performance metrics (e.g., ROC-AUC, precision) and model hyperparameter configurations in JSON format.
@@ -46,7 +46,7 @@ A production-ready, full-stack application designed for machine learning teams t
 
 ## Architecture & System Flow
 
-The system consists of a **FastAPI backend** managing API endpoints and scheduling batch runs, a **React SPA frontend** for visual catalog management, and a **Microsoft SQL Server** instance managing relational entities and online/offline feature storage.
+The system consists of a **FastAPI backend** managing API endpoints and scheduling batch runs, a **React SPA frontend** for visual catalog management, and a **Supabase PostgreSQL** instance managing relational entities and online/offline feature storage.
 
 ```mermaid
 graph TD
@@ -59,7 +59,7 @@ graph TD
         API --> Scheduler[APScheduler Background Workers]
     end
   
-    subgraph MS SQL Server Database
+    subgraph Supabase PostgreSQL Database
         Scheduler -->|Runs SQL Source Queries| SampleEvents[feature_store.sample_events]
         Services -->|Batch Ingest| OnlineStore[feature_store.feature_values_online]
         Services -->|Append Historic Logs| OfflineStore[feature_store.feature_values_offline]
@@ -77,7 +77,7 @@ graph TD
 * **Core Logic**: Python 3.9+, HTML5, JavaScript (ES6+).
 * **Backend Server**: FastAPI, Uvicorn, Pydantic v2 (Settings configuration).
 * **ORM & Migrations**: SQLAlchemy Core/ORM, Alembic database migration framework.
-* **Database**: Microsoft SQL Server 2022 (Docker-based container).
+* **Database**: Supabase PostgreSQL (cloud-hosted, PostgreSQL 15+).
 * **Background Jobs**: APScheduler (Advanced Python Scheduler) with Cron validation.
 * **Frontend Client**: React 18, Vite build tool, React Router v6, Lucide React (Icons), Vanilla CSS (premium theme styles).
 
@@ -89,7 +89,7 @@ graph TD
 Feature_store/
 │
 ├── database/
-│   └── schema.sql                 # SQL script for initializing MS SQL Server schemas & tables
+│   └── schema.sql                 # PostgreSQL schema for Supabase initialization
 │
 ├── backend/
 │   ├── alembic.ini                # Alembic database migration config file
@@ -131,10 +131,10 @@ Feature_store/
 │       └── pages/                 # UI views (Dashboard, Catalog, Registry, Jobs, Admin, Login)
 │
 ├── docs/
-│   └── ui.md                      # UI routes list and mock wireframe designs
+│   └── DATABASE_MIGRATION.md      # Rules and decisions for the MS SQL → Supabase migration
 │
 ├── .env.example                   # Environment configuration template
-└── docker-compose.yml             # MS SQL Server database container definition
+└── docker-compose.yml             # Optional local PostgreSQL container (commented out)
 ```
 
 ---
@@ -144,24 +144,29 @@ Feature_store/
 To run this application, make sure you have installed:
 
 1. **Operating System**: Windows (tested on Windows 10/11) or macOS/Linux.
-2. **Docker Desktop**: Needed to spin up the Microsoft SQL Server database.
+2. **Supabase Account**: Free or Pro account at [supabase.com](https://supabase.com). No Docker required for the database.
 3. **Python 3.9+**: For running the FastAPI backend.
 4. **Node.js v18+**: For compiling and running the Vite frontend app.
-5. **ODBC Driver 18 for SQL Server**: Required by `pyodbc` to bridge python to SQL Server. Download from [Microsoft&#39;s official site](https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server).
+
+> [!NOTE]
+> The MS SQL Server Docker container and ODBC Driver 18 are **no longer required**. The database is now hosted on Supabase PostgreSQL.
 
 ---
 
 ## Quickstart Setup Guide
 
-### 1. Database Initialization (Docker + SQL Server)
+### 1. Supabase Database Setup
 
-From the project root directory, launch the SQL Server developer container:
+1. Go to [supabase.com](https://supabase.com) and create a new project.
+2. Once the project is ready, navigate to **Project Settings → Database**.
+3. Under **Connection string**, select **Python / SQLAlchemy** and copy the URI. It looks like:
+   ```
+   postgresql+psycopg2://postgres.xxxxxxxxxxxx:YOUR_PASSWORD@aws-0-ap-south-1.pooler.supabase.com:5432/postgres
+   ```
+4. You will use this URI as your `DATABASE_URL` in the next step.
 
-```powershell
-docker compose up -d db
-```
-
-Ensure Docker is running and verify the container is active on port `1433`.
+> [!TIP]
+> You can also run the schema manually via the Supabase SQL editor — paste the contents of `database/schema.sql` and execute.
 
 ### 2. Database Schema Creation (Alembic or SQL Script)
 
@@ -169,7 +174,7 @@ You can choose **one** of two ways to configure the database tables:
 
 #### Option A: Alembic Database Migrations (Recommended)
 
-This uses python-based migrations to establish matching table schemas:
+This uses Python-based migrations to establish matching table schemas:
 
 1. Set up the backend virtual environment first (see next step).
 2. Inside the `backend/` directory, run:
@@ -177,14 +182,11 @@ This uses python-based migrations to establish matching table schemas:
    alembic upgrade head
    ```
 
-#### Option B: SQLcmd Native Execution (Manual Script)
+#### Option B: Supabase SQL Editor (Manual Script)
 
-Directly run the generated T-SQL script using command line utility:
-
-```powershell
-sqlcmd -S localhost -U sa -P Your_password123 -Q "CREATE DATABASE feature_store;"
-sqlcmd -S localhost -U sa -P Your_password123 -d feature_store -i database/schema.sql
-```
+1. Open your Supabase project dashboard.
+2. Go to **SQL Editor** → **New Query**.
+3. Paste the contents of `database/schema.sql` and click **Run**.
 
 ### 3. Backend Configuration & Launch
 
@@ -208,8 +210,8 @@ sqlcmd -S localhost -U sa -P Your_password123 -d feature_store -i database/schem
    ```powershell
    copy ..\.env.example .env
    ```
+   Then open `backend/.env` and set your Supabase `DATABASE_URL`.
 
-   *(Note: If you changed the SQL Server password in `docker-compose.yml`, update `DATABASE_URL` in `.env` accordingly).*
 5. Start the FastAPI application server:
    ```powershell
    uvicorn app.main:app --reload
@@ -282,3 +284,24 @@ curl -X GET "http://localhost:8000/features" \
 ```
 
 ---
+
+## Database Migration Rules
+
+This project was migrated from **Microsoft SQL Server 2022** to **Supabase PostgreSQL**. Key decisions:
+
+| Aspect | MS SQL Server (old) | Supabase PostgreSQL (new) |
+|---|---|---|
+| UUID type | `UNIQUEIDENTIFIER` | `UUID` (`postgresql.UUID`) |
+| UUID generation | `NEWID()` | `gen_random_uuid()` |
+| Current timestamp | `SYSUTCDATETIME()` | `NOW()` |
+| Date arithmetic | `DATEADD(day, -1, ...)` | `NOW() - INTERVAL '1 day'` |
+| Boolean default | `1` / `0` | `true` / `false` |
+| Conditional table create | `IF OBJECT_ID(...) IS NULL CREATE TABLE` | `CREATE TABLE IF NOT EXISTS` |
+| DB driver (Python) | `pyodbc` | `psycopg2-binary` |
+| SQLAlchemy dialect | `mssql+pyodbc` | `postgresql+psycopg2` |
+| String type | `NVARCHAR` | `VARCHAR` |
+| Datetime type | `DATETIME2` | `TIMESTAMPTZ` |
+| Decimal type | `DECIMAL(12,2)` | `NUMERIC(12,2)` |
+
+> [!IMPORTANT]
+> Always set your `DATABASE_URL` in `backend/.env` before running Alembic migrations or the seed script.

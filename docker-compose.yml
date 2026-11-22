@@ -1,16 +1,21 @@
-version: "3.9"
-services:
-  db:
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    container_name: feature_store_sql
-    environment:
-      ACCEPT_EULA: "Y"
-      MSSQL_PID: "Developer"
-      MSSQL_SA_PASSWORD: "Your_password123"
-    ports:
-      - "1433:1433"
-    volumes:
-      - mssql_data:/var/opt/mssql
+# docker-compose.yml
+# MS SQL Server has been replaced by Supabase PostgreSQL (cloud-hosted).
+# This file is kept for reference. To run a local PostgreSQL for development,
+# uncomment the service below and set DATABASE_URL in backend/.env accordingly.
 
-volumes:
-  mssql_data:
+# version: "3.9"
+# services:
+#   db:
+#     image: postgres:16
+#     container_name: feature_store_pg
+#     environment:
+#       POSTGRES_USER: postgres
+#       POSTGRES_PASSWORD: Your_password123
+#       POSTGRES_DB: feature_store
+#     ports:
+#       - "5432:5432"
+#     volumes:
+#       - pg_data:/var/lib/postgresql/data
+#
+# volumes:
+#   pg_data:

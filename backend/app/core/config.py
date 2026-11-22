@@ -5,8 +5,7 @@ class Settings(BaseSettings):
     app_name: str = "Feature Store"
     app_env: str = "local"
     database_url: str = (
-        "mssql+pyodbc://sa:Your_password123@localhost:1433/feature_store"
-        "?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+        "postgresql+psycopg2://postgres.xxxxxxxxxxxxxxxxxxxx:YOUR_PASSWORD@aws-0-ap-south-1.pooler.supabase.com:5432/postgres"
     )
     jwt_secret: str = "change-me"
     jwt_algorithm: str = "HS256"

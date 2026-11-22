@@ -46,11 +46,10 @@ def seed() -> None:
         db.execute(
             text(
                 """
-                IF OBJECT_ID('feature_store.sample_events', 'U') IS NULL
-                CREATE TABLE feature_store.sample_events (
-                    customer_id NVARCHAR(50) NOT NULL,
-                    amount DECIMAL(12, 2) NOT NULL,
-                    event_time DATETIME2 NOT NULL
+                CREATE TABLE IF NOT EXISTS feature_store.sample_events (
+                    customer_id VARCHAR(50) NOT NULL,
+                    amount NUMERIC(12, 2) NOT NULL,
+                    event_time TIMESTAMPTZ NOT NULL
                 );
                 """
             )
@@ -58,12 +57,13 @@ def seed() -> None:
         db.execute(
             text(
                 """
-                IF NOT EXISTS (SELECT 1 FROM feature_store.sample_events)
                 INSERT INTO feature_store.sample_events (customer_id, amount, event_time)
-                VALUES
-                    ('cust_001', 120.50, SYSUTCDATETIME()),
-                    ('cust_002', 89.25, DATEADD(day, -1, SYSUTCDATETIME())),
-                    ('cust_001', 49.99, DATEADD(day, -2, SYSUTCDATETIME()));
+                SELECT * FROM (VALUES
+                    ('cust_001', 120.50, NOW()),
+                    ('cust_002', 89.25, NOW() - INTERVAL '1 day'),
+                    ('cust_001', 49.99, NOW() - INTERVAL '2 days')
+                ) AS v(customer_id, amount, event_time)
+                WHERE NOT EXISTS (SELECT 1 FROM feature_store.sample_events);
                 """
             )
         )

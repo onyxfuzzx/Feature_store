@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import mssql
+from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = 'c035ccd4da68'
@@ -20,12 +20,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     op.create_table('api_keys',
-        sa.Column('id', mssql.UNIQUEIDENTIFIER(), nullable=False),
-        sa.Column('user_id', mssql.UNIQUEIDENTIFIER(), nullable=False),
+        sa.Column('id', postgresql.UUID(as_uuid=True), server_default=sa.text('gen_random_uuid()'), nullable=False),
+        sa.Column('user_id', postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column('name', sa.String(length=120), nullable=False),
         sa.Column('key_hash', sa.String(length=255), nullable=False),
-        sa.Column('is_active', sa.Boolean(), server_default=sa.text('1'), nullable=False),
-        sa.Column('created_at', sa.DateTime(), server_default=sa.text('sysutcdatetime()'), nullable=False),
+        sa.Column('is_active', sa.Boolean(), server_default=sa.text('true'), nullable=False),
+        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
         sa.ForeignKeyConstraint(['user_id'], ['core.users.id'], ),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('key_hash'),
