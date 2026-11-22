@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     admin_name: str = "FeatureOps Admin"
     admin_email: str = "admin@featureops.local"
     admin_password: str = "ChangeMe123!"
+    online_store_backend: str = "postgres"  # "postgres" or "redis"
+    redis_url: str = "redis://localhost:6379/0"
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
 

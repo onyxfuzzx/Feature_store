@@ -147,3 +147,63 @@ class FeatureStoreClient:
         if res.status_code != 200:
             raise FeatureStoreError(f"Upload artifact failed ({res.status_code}): {res.text}")
         return res.json()
+
+    def dry_run_query(self, query: str, limit: int = 10) -> Dict[str, Any]:
+        """Preview and validate feature SQL transformation query results."""
+        url = f"{self.api_url}/features/dry-run"
+        res = self._session.post(url, json={"query": query, "limit": limit}, headers=self._headers())
+        if res.status_code != 200:
+            raise FeatureStoreError(f"Query dry-run failed ({res.status_code}): {res.text}")
+        return res.json()
+
+    def get_feature_lineage(self, feature_id: str) -> Dict[str, Any]:
+        """Get the visual DAG dependency graph for a feature."""
+        url = f"{self.api_url}/features/{feature_id}/lineage-graph"
+        res = self._session.get(url, headers=self._headers())
+        if res.status_code != 200:
+            raise FeatureStoreError(f"Feature lineage failed ({res.status_code}): {res.text}")
+        return res.json()
+
+    def get_model_lineage(self, model_id: str) -> Dict[str, Any]:
+        """Get the visual DAG dependency graph for a model."""
+        url = f"{self.api_url}/models/{model_id}/lineage-graph"
+        res = self._session.get(url, headers=self._headers())
+        if res.status_code != 200:
+            raise FeatureStoreError(f"Model lineage failed ({res.status_code}): {res.text}")
+        return res.json()
+
+    def hydrate_model_features(
+        self,
+        model_id: str,
+        entity_keys: List[str],
+        version: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Hydrate online features for the specified model in real time."""
+        url = f"{self.api_url}/models/{model_id}/hydrate"
+        payload = {"entity_keys": entity_keys, "version": version}
+        res = self._session.post(url, json=payload, headers=self._headers())
+        if res.status_code != 200:
+            raise FeatureStoreError(f"Model feature hydration failed ({res.status_code}): {res.text}")
+        return res.json()
+
+    def predict(
+        self,
+        model_id: str,
+        entity_key: str,
+        runtime_features: Optional[Dict[str, Any]] = None,
+        version: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Real-time model inference proxy:
+        Hydrates latest online features, combines runtime features, and returns scored prediction.
+        """
+        url = f"{self.api_url}/models/{model_id}/predict"
+        payload = {
+            "entity_key": entity_key,
+            "version": version,
+            "runtime_features": runtime_features or {},
+        }
+        res = self._session.post(url, json=payload, headers=self._headers())
+        if res.status_code != 200:
+            raise FeatureStoreError(f"Model prediction failed ({res.status_code}): {res.text}")
+        return res.json()

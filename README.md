@@ -318,10 +318,22 @@ This project was migrated from **Microsoft SQL Server 2022** to **Supabase Postg
 
 ## Roadmap & Milestones
 
-For the full open-source roadmap, technical audit, and UI redesign plan, see [`milestone.md`](milestone.md).
+For the full open-source roadmap, technical audit, and UI redesign plan, see [`milestone.md`](milestone.md) and [`docs/END_TO_END_BLUEPRINT.md`](docs/END_TO_END_BLUEPRINT.md).
 
-* **Milestone 1**: Core Feature Store Engine (Batch Online Retrieval, As-Of Offline Joins, Redis Adapter, Pytest Suite).
-* **Milestone 2**: Complete UI/UX Redesign (Tailwind CSS, shadcn/ui, TanStack Table & Query, Recharts, purge of AI-slop styles).
-* **Milestone 3**: Real Data Quality & Model Drift Engine (Active validation, Population Stability Index, S3/Supabase artifact storage).
-* **Milestone 4**: Developer Experience (Python Client SDK & CLI).
-* **Milestone 5**: Open-Source Packaging & Release (Apache 2.0, CI/CD, Documentation, one-command Docker compose).
+* **Milestone 1**: Core Feature Store Engine (Batch Online Retrieval, As-Of Offline Joins, Streaming Ingest, Pytest Suite).
+* **Milestone 2**: Complete UI/UX Redesign (Tailwind CSS v4, Lucide icons, Dark modern UI, purge of AI-slop styles).
+* **Milestone 3**: Real Data Quality & Model Drift Engine (Active validation, Population Stability Index, artifact storage).
+* **Milestone 4**: Developer Experience (Official Python Client SDK & CLI).
+* **Milestone 5**: Open-Source Packaging & Release (Apache 2.0, CI/CD, one-command Docker compose).
+* **Milestone 6**: Enterprise End-to-End Capabilities (Interactive Visual Lineage DAG, SQL Sandbox / Dry-Run, Real-Time Inference Proxy, Redis Tier, and Runnable ML Tutorial).
+
+---
+
+## End-to-End Tutorial & Examples
+
+See [`examples/README.md`](examples/README.md) for a complete, runnable end-to-end churn prediction pipeline:
+
+```bash
+# Run the complete A-to-Z ML lifecycle
+python examples/01_churn_prediction_e2e.py
+```

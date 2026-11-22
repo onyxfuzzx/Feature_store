@@ -65,3 +65,31 @@ class ModelVersionDetailOut(ModelVersionOut):
     lineage: list[ModelLineageOut] = []
     stage_history: list[ModelStageHistoryOut] = []
 
+
+class ModelHydrateRequest(ORMBase):
+    entity_keys: list[str]
+    version: str | None = None  # None = active Production / latest version
+
+
+class ModelHydrateResponse(ORMBase):
+    model_id: UUID
+    version: str
+    features: list[str]
+    hydrated_records: list[dict[str, str | None]]
+    latency_ms: float
+
+
+class ModelPredictRequest(ORMBase):
+    entity_key: str
+    version: str | None = None
+    runtime_features: dict[str, str | float] = {}
+
+
+class ModelPredictResponse(ORMBase):
+    model_id: UUID
+    version: str
+    entity_key: str
+    features_used: dict[str, str | None]
+    prediction: dict
+    latency_ms: float
+

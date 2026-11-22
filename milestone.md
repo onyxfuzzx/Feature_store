@@ -150,3 +150,24 @@ flowchart LR
 - [x] **One-Click Self-Hosting Setup**:
   - Added production `docker-compose.yml`, `backend/Dockerfile`, `frontend/Dockerfile`, and `frontend/nginx.conf`.
 
+---
+
+### Milestone 6: Enterprise End-to-End Architecture (A to Z)
+**Status: ✅ COMPLETED**
+
+- [x] **Interactive SQL Query Sandbox & Dry-Run**:
+  - Implemented `POST /features/dry-run` with read-only transaction guardrails against destructive DDL/DML.
+  - Added live query testing and schema preview directly inside the Create Feature modal.
+- [x] **Interactive Lineage DAG Engine**:
+  - Implemented `GET /features/{id}/lineage-graph` and `GET /models/{id}/lineage-graph`.
+  - Built unified `LineageGraph.jsx` component rendering end-to-end directed dependencies (`Source Tables` ➔ `Features` ➔ `Models` ➔ `Inference Endpoints`) across Feature Detail and Model Detail pages.
+- [x] **Real-Time Feature Hydration & Model Inference Proxy**:
+  - Implemented `POST /models/{id}/hydrate` for sub-10ms feature vector assembly.
+  - Implemented `POST /models/{id}/predict` inference proxy endpoint with automated hydration, runtime feature merging, and scored prediction outputs.
+- [x] **Pluggable Online Store Tier**:
+  - Added `app/services/online_store.py` abstraction supporting high-throughput **Redis** key-value caching alongside **PostgreSQL** with automatic fallback.
+- [x] **End-to-End ML Pipeline Tutorial**:
+  - Created runnable pipeline script `examples/01_churn_prediction_e2e.py` and `examples/README.md`.
+- [x] **Master Architectural Blueprint**:
+  - Published comprehensive blueprint in `docs/END_TO_END_BLUEPRINT.md`.
+

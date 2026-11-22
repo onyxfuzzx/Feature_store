@@ -127,3 +127,76 @@ def test_jobs_overview(client, auth_headers):
     assert isinstance(jobs, list)
     if jobs:
         assert "recent_runs" in jobs[0]
+
+
+def test_dry_run_query(client, auth_headers):
+    res = client.post(
+        "/features/dry-run",
+        headers=auth_headers,
+        json={"query": "SELECT 1 as entity_key, 42.5 as test_val", "limit": 5},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["is_valid"] is True
+    assert "entity_key" in body["columns"]
+    assert len(body["rows"]) == 1
+
+
+def test_dry_run_disallows_dml(client, auth_headers):
+    res = client.post(
+        "/features/dry-run",
+        headers=auth_headers,
+        json={"query": "DELETE FROM feature_store.raw_events", "limit": 5},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["is_valid"] is False
+    assert "disallowed" in body["error"].lower() or "read-only" in body["error"].lower()
+
+
+def test_feature_lineage_graph(client, auth_headers):
+    features_res = client.get("/features", headers=auth_headers)
+    assert features_res.status_code == 200
+    features = features_res.json()
+    if features:
+        feat_id = features[0]["id"]
+        res = client.get(f"/features/{feat_id}/lineage-graph", headers=auth_headers)
+        assert res.status_code == 200
+        body = res.json()
+        assert "nodes" in body
+        assert "edges" in body
+        assert any(n["type"] == "feature" for n in body["nodes"])
+
+
+def test_model_lineage_hydrate_predict(client, auth_headers):
+    models_res = client.get("/models", headers=auth_headers)
+    assert models_res.status_code == 200
+    models = models_res.json()
+    if models:
+        model_id = models[0]["id"]
+        # 1. Lineage
+        lin_res = client.get(f"/models/{model_id}/lineage-graph", headers=auth_headers)
+        assert lin_res.status_code == 200
+        assert "nodes" in lin_res.json()
+
+        # 2. Hydrate
+        hyd_res = client.post(
+            f"/models/{model_id}/hydrate",
+            headers=auth_headers,
+            json={"entity_keys": ["cust_001"]},
+        )
+        assert hyd_res.status_code == 200
+        hyd_body = hyd_res.json()
+        assert "hydrated_records" in hyd_body
+        assert "latency_ms" in hyd_body
+
+        # 3. Predict
+        pred_res = client.post(
+            f"/models/{model_id}/predict",
+            headers=auth_headers,
+            json={"entity_key": "cust_001", "runtime_features": {"cart_size": 3}},
+        )
+        assert pred_res.status_code == 200
+        pred_body = pred_res.json()
+        assert "prediction" in pred_body
+        assert "probability" in pred_body["prediction"]

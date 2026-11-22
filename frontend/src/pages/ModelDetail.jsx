@@ -5,6 +5,7 @@ import { Card, CardHeader } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { Modal } from "../components/ui/Modal";
+import LineageGraph from "../components/LineageGraph";
 import {
   Cpu,
   Plus,
@@ -16,6 +17,8 @@ import {
   CheckCircle2,
   Layers,
   ArrowUpRight,
+  Send,
+  Zap,
 } from "lucide-react";
 
 export default function ModelDetail() {
@@ -23,6 +26,7 @@ export default function ModelDetail() {
   const [model, setModel] = useState(null);
   const [versions, setVersions] = useState([]);
   const [driftData, setDriftData] = useState(null);
+  const [lineageGraph, setLineageGraph] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("versions");
 
@@ -42,24 +46,51 @@ export default function ModelDetail() {
   });
   const [submittingVersion, setSubmittingVersion] = useState(false);
 
+  // Inference Proxy Bench
+  const [predictKey, setPredictKey] = useState("cust_001");
+  const [predictResult, setPredictResult] = useState(null);
+  const [predicting, setPredicting] = useState(false);
+
   const user = getActiveUser();
   const canEdit = user?.roles?.some((r) => ["admin", "ml_engineer"].includes(r));
 
   const loadData = async () => {
     try {
       setLoading(true);
-      const [m, v, d] = await Promise.all([
+      const [m, v, d, lin] = await Promise.all([
         fetchApi(`/models/${id}`),
         fetchApi(`/models/${id}/versions`),
         fetchApi(`/models/${id}/drift`),
+        fetchApi(`/models/${id}/lineage-graph`).catch(() => null),
       ]);
       setModel(m);
       setVersions(v);
       setDriftData(d);
+      setLineageGraph(lin);
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePredict = async () => {
+    if (!predictKey.trim()) return;
+    setPredicting(true);
+    setPredictResult(null);
+    try {
+      const res = await fetchApi(`/models/${id}/predict`, {
+        method: "POST",
+        body: JSON.stringify({
+          entity_key: predictKey,
+          runtime_features: { request_channel: "web_app", cart_size: 4 },
+        }),
+      });
+      setPredictResult(res);
+    } catch (err) {
+      alert("Inference failed: " + err.message);
+    } finally {
+      setPredicting(false);
     }
   };
 
@@ -150,6 +181,8 @@ export default function ModelDetail() {
       <div className="flex gap-2 border-b border-zinc-800/80">
         {[
           { key: "versions", label: `Versions (${versions.length})` },
+          { key: "lineage", label: "Lineage DAG" },
+          { key: "predict", label: "Real-Time Inference Bench" },
           { key: "drift", label: "Population Stability & Drift (PSI)" },
         ].map((t) => (
           <button
@@ -266,6 +299,80 @@ export default function ModelDetail() {
             )}
           </Card>
         </div>
+      )}
+
+      {/* Tab: Lineage */}
+      {activeTab === "lineage" && (
+        <Card>
+          <CardHeader
+            title="Model Lineage & Feature Dependency DAG"
+            description="End-to-end dependency graph showing features and source tables feeding this model."
+          />
+          <LineageGraph graph={lineageGraph} />
+        </Card>
+      )}
+
+      {/* Tab: Inference Proxy Bench */}
+      {activeTab === "predict" && (
+        <Card>
+          <CardHeader
+            title="Real-Time Model Inference Proxy"
+            description="Automated feature hydration from online store combined with real-time scoring."
+          />
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row items-center gap-3">
+              <input
+                type="text"
+                placeholder="Entity primary key (e.g. cust_001)"
+                value={predictKey}
+                onChange={(e) => setPredictKey(e.target.value)}
+                className="w-full sm:w-80 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-700"
+              />
+              <Button variant="primary" onClick={handlePredict} loading={predicting}>
+                <Send className="w-3.5 h-3.5" /> Run Prediction
+              </Button>
+            </div>
+
+            {predictResult && (
+              <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-950 space-y-3">
+                <div className="flex items-center justify-between text-xs font-mono pb-2 border-b border-zinc-800">
+                  <span className="text-zinc-400">Inference Latency</span>
+                  <span className="text-emerald-400 font-semibold">{predictResult.latency_ms} ms</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
+                    <span className="text-[10px] text-zinc-500 uppercase font-mono">Prediction Class</span>
+                    <p className="text-lg font-bold font-mono text-zinc-100 mt-1">
+                      {predictResult.prediction?.prediction_class}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
+                    <span className="text-[10px] text-zinc-500 uppercase font-mono">Probability / Score</span>
+                    <p className="text-lg font-bold font-mono text-indigo-400 mt-1">
+                      {predictResult.prediction?.probability}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
+                    <span className="text-[10px] text-zinc-500 uppercase font-mono">Classification Label</span>
+                    <p className="text-xs font-semibold text-emerald-400 mt-2 truncate">
+                      {predictResult.prediction?.label}
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-[11px] font-mono text-zinc-400 block mb-1.5">
+                    Hydrated Online Feature Vector:
+                  </span>
+                  <div className="p-2.5 rounded bg-zinc-900/80 border border-zinc-800/80 font-mono text-xs text-zinc-300">
+                    <pre>{JSON.stringify(predictResult.features_used, null, 2)}</pre>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </Card>
       )}
 
       {/* Modal: Promote Stage */}

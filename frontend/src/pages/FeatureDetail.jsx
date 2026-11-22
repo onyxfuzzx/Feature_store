@@ -4,6 +4,7 @@ import { fetchApi, getActiveUser } from "../api";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { Card, CardHeader } from "../components/ui/Card";
+import LineageGraph from "../components/LineageGraph";
 import {
   Layers,
   Play,
@@ -21,6 +22,7 @@ export default function FeatureDetail() {
   const { id } = useParams();
   const [feature, setFeature] = useState(null);
   const [materializations, setMaterializations] = useState([]);
+  const [lineageGraph, setLineageGraph] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("overview");
 
@@ -39,12 +41,14 @@ export default function FeatureDetail() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [fData, matData] = await Promise.all([
+      const [fData, matData, linData] = await Promise.all([
         fetchApi(`/features/${id}`),
         fetchApi(`/features/${id}/materializations`),
+        fetchApi(`/features/${id}/lineage-graph`).catch(() => null),
       ]);
       setFeature(fData);
       setMaterializations(matData);
+      setLineageGraph(linData);
     } catch (err) {
       console.error(err);
     } finally {
@@ -146,6 +150,7 @@ export default function FeatureDetail() {
       <div className="flex gap-2 border-b border-zinc-800/80">
         {[
           { key: "overview", label: "Overview & SQL" },
+          { key: "lineage", label: "Lineage DAG" },
           { key: "test", label: "Online Serving Test Bench" },
           { key: "history", label: `Materialization Runs (${materializations.length})` },
         ].map((t) => (
@@ -242,6 +247,17 @@ export default function FeatureDetail() {
               </div>
             )}
           </div>
+        </Card>
+      )}
+
+      {/* Tab: Lineage */}
+      {activeTab === "lineage" && (
+        <Card>
+          <CardHeader
+            title="End-to-End Feature Lineage DAG"
+            description="Upstream source tables feeding this feature and downstream models consuming it."
+          />
+          <LineageGraph graph={lineageGraph} />
         </Card>
       )}
 

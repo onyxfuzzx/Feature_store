@@ -131,4 +131,36 @@ class StreamIngestResponse(ORMBase):
     timestamp: datetime
 
 
+class QueryDryRunRequest(ORMBase):
+    query: str
+    limit: int = 10
+
+
+class QueryDryRunResponse(ORMBase):
+    columns: list[str] = []
+    rows: list[dict[str, str | None]] = []
+    row_count: int = 0
+    execution_time_ms: float = 0.0
+    is_valid: bool = True
+    error: str | None = None
+
+
+class LineageNode(ORMBase):
+    id: str
+    label: str
+    type: str  # source_table, feature_group, feature, model, endpoint
+    metadata: dict[str, str | None] = {}
+
+
+class LineageEdge(ORMBase):
+    source: str
+    target: str
+    label: str | None = None
+
+
+class LineageGraphOut(ORMBase):
+    nodes: list[LineageNode] = []
+    edges: list[LineageEdge] = []
+
+
 

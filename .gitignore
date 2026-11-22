@@ -30,3 +30,7 @@ build/
 # Coverage
 .coverage
 htmlcov/
+
+# Storage
+storage/
+backend/storage/

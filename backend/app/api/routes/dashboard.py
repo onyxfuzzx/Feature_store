@@ -29,7 +29,12 @@ def summary(db: Session = Depends(get_db)):
         .first()
     )
     if last_materialization and last_materialization.started_at:
-        delta = datetime.utcnow() - last_materialization.started_at
+        st = last_materialization.started_at
+        if st.tzinfo is not None:
+            now = datetime.now(st.tzinfo)
+        else:
+            now = datetime.utcnow()
+        delta = now - st
         mins = int(delta.total_seconds() / 60)
         last_materialization_value = f"{mins} min ago" if mins > 0 else "Just now"
     else:

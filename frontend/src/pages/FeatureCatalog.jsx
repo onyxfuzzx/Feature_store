@@ -54,8 +54,27 @@ export default function FeatureCatalog() {
   });
 
   const [submitting, setSubmitting] = useState(false);
+  const [dryRunning, setDryRunning] = useState(false);
+  const [dryRunResult, setDryRunResult] = useState(null);
   const user = getActiveUser();
   const canEdit = user?.roles?.some((r) => ["admin", "ml_engineer", "data_scientist"].includes(r));
+
+  const handleDryRun = async () => {
+    if (!featureForm.source_sql.trim()) return;
+    setDryRunning(true);
+    setDryRunResult(null);
+    try {
+      const res = await fetchApi("/features/dry-run", {
+        method: "POST",
+        body: JSON.stringify({ query: featureForm.source_sql, limit: 3 }),
+      });
+      setDryRunResult(res);
+    } catch (err) {
+      setDryRunResult({ is_valid: false, error: err.message });
+    } finally {
+      setDryRunning(false);
+    }
+  };
 
   const loadData = async () => {
     try {
@@ -384,7 +403,17 @@ export default function FeatureCatalog() {
           </div>
 
           <div>
-            <label className="block font-medium text-zinc-300 mb-1">SQL Transformation</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block font-medium text-zinc-300">SQL Transformation</label>
+              <button
+                type="button"
+                onClick={handleDryRun}
+                disabled={dryRunning}
+                className="text-[11px] text-emerald-400 hover:text-emerald-300 font-mono underline disabled:opacity-50"
+              >
+                {dryRunning ? "Testing SQL..." : "Test Query (Dry Run)"}
+              </button>
+            </div>
             <textarea
               required
               rows={3}
@@ -393,6 +422,45 @@ export default function FeatureCatalog() {
               onChange={(e) => setFeatureForm({ ...featureForm, source_sql: e.target.value })}
             />
             <p className="text-[10px] text-zinc-500 mt-1">Must alias entity_key and value.</p>
+
+            {dryRunResult && (
+              <div className="mt-2 p-2.5 rounded-lg border text-xs font-mono bg-zinc-950 border-zinc-800">
+                {dryRunResult.is_valid ? (
+                  <div>
+                    <div className="flex items-center justify-between text-emerald-400 mb-1.5 text-[11px]">
+                      <span>✓ Query Validated ({dryRunResult.execution_time_ms}ms)</span>
+                      <span className="text-zinc-500">{dryRunResult.row_count} sample rows</span>
+                    </div>
+                    {dryRunResult.rows.length > 0 && (
+                      <div className="overflow-x-auto max-h-28 text-[10px]">
+                        <table className="w-full text-left text-zinc-400">
+                          <thead>
+                            <tr className="border-b border-zinc-800 text-zinc-300">
+                              {dryRunResult.columns.map((c) => (
+                                <th key={c} className="py-1 px-1.5">{c}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {dryRunResult.rows.map((r, idx) => (
+                              <tr key={idx} className="border-b border-zinc-900">
+                                {dryRunResult.columns.map((c) => (
+                                  <td key={c} className="py-0.5 px-1.5 text-zinc-200">{r[c] ?? "null"}</td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-rose-400 text-[11px]">
+                    ✕ Error: {dryRunResult.error}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Validation Rules Section */}

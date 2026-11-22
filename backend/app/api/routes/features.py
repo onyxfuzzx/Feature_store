@@ -3,6 +3,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_roles, get_current_user
@@ -16,6 +17,7 @@ from app.db.models.feature_store import (
     FeatureValueOnline,
     FeatureValueOffline,
 )
+from app.db.models.model_registry import Model, ModelVersion, ModelLineage
 from app.db.session import get_db
 from app.schemas.feature_store import (
     FeatureDefinitionCreate,
@@ -33,9 +35,15 @@ from app.schemas.feature_store import (
     AsOfJoinResponse,
     StreamIngestRequest,
     StreamIngestResponse,
+    QueryDryRunRequest,
+    QueryDryRunResponse,
+    LineageGraphOut,
+    LineageNode,
+    LineageEdge,
 )
 from app.services.materialization import materialize_feature
 from app.services.audit import log_audit
+from app.services.online_store import get_online_store
 
 
 router = APIRouter(prefix="/features", tags=["features"])
@@ -358,27 +366,16 @@ def get_batch_online_features(
         if feat:
             resolved_features[feat_ref] = feat
 
-    feature_ids = [f.id for f in resolved_features.values()]
+    feature_id_map = {feat.id: feat.name for feat in resolved_features.values()}
+    store = get_online_store()
+    raw_results = store.get_online_features(payload.entity_keys, feature_id_map, db)
 
-    online_records = (
-        db.query(FeatureValueOnline)
-        .filter(
-            FeatureValueOnline.entity_key.in_(payload.entity_keys),
-            FeatureValueOnline.feature_id.in_(feature_ids),
-        )
-        .all()
-    )
-
-    record_map: dict[str, dict[UUID, str | None]] = {ek: {} for ek in payload.entity_keys}
-    for row in online_records:
-        if row.entity_key in record_map:
-            record_map[row.entity_key][row.feature_id] = row.value
-
+    # Align with payload requested aliases/references
     values_result: dict[str, dict[str, str | None]] = {}
     for ek in payload.entity_keys:
         values_result[ek] = {}
         for feat_ref, feat in resolved_features.items():
-            values_result[ek][feat.name] = record_map[ek].get(feat.id, None)
+            values_result[ek][feat.name] = raw_results.get(ek, {}).get(feat.name, None)
 
     latency_ms = round((time.perf_counter() - start_time) * 1000, 3)
 
@@ -511,11 +508,167 @@ def stream_ingest(
         ingested += 1
 
     db.commit()
+
+    # Mirror to configured online store cache
+    try:
+        online_store = get_online_store()
+        cache_records = [
+            {"entity_key": r.entity_key, "feature_id": r.feature_id, "value": r.value, "event_time": r.event_time}
+            for r in payload.records if r.feature_id
+        ]
+        if cache_records:
+            online_store.write_online_features(cache_records, db)
+    except Exception:
+        pass
+
     return StreamIngestResponse(
         ingested_count=ingested,
         success=True,
         timestamp=now,
     )
+
+
+@router.post(
+    "/dry-run",
+    response_model=QueryDryRunResponse,
+    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST))],
+)
+def dry_run_query(
+    payload: QueryDryRunRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Safely executes an exploratory SQL query with a row limit to preview feature transformations.
+    Restricts destructive DDL/DML keywords.
+    """
+    cleaned = payload.query.strip().rstrip(";")
+    upper_q = cleaned.upper()
+    disallowed = ["DROP ", "DELETE ", "UPDATE ", "INSERT ", "ALTER ", "TRUNCATE ", "GRANT ", "REVOKE "]
+    if any(kw in upper_q for kw in disallowed):
+        return QueryDryRunResponse(
+            is_valid=False,
+            error="Only read-only SELECT queries are allowed for feature transformations.",
+        )
+
+    limited_query = f"SELECT * FROM ({cleaned}) AS subq LIMIT {min(payload.limit, 50)}"
+    start = time.perf_counter()
+    try:
+        result = db.execute(text(limited_query))
+        columns = list(result.keys())
+        raw_rows = result.fetchall()
+        rows = [
+            {col: (str(val) if val is not None else None) for col, val in zip(columns, row)}
+            for row in raw_rows
+        ]
+        elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+        return QueryDryRunResponse(
+            columns=columns,
+            rows=rows,
+            row_count=len(rows),
+            execution_time_ms=elapsed_ms,
+            is_valid=True,
+        )
+    except Exception as e:
+        elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+        return QueryDryRunResponse(
+            columns=[],
+            rows=[],
+            row_count=0,
+            execution_time_ms=elapsed_ms,
+            is_valid=False,
+            error=str(e),
+        )
+
+
+@router.get(
+    "/{feature_id}/lineage-graph",
+    response_model=LineageGraphOut,
+    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+)
+def get_feature_lineage_graph(
+    feature_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """
+    Returns the visual DAG dependency graph for a feature:
+    Upstream tables -> Feature Group -> Feature -> Downstream Models -> Serving Endpoints.
+    """
+    feature = db.get(FeatureDefinition, feature_id)
+    if not feature:
+        raise HTTPException(status_code=404, detail="Feature not found")
+
+    group = db.get(FeatureGroup, feature.group_id)
+    nodes: list[LineageNode] = []
+    edges: list[LineageEdge] = []
+
+    # 1. Feature Node
+    feat_node_id = f"feat:{feature.id}"
+    nodes.append(LineageNode(
+        id=feat_node_id,
+        label=feature.name,
+        type="feature",
+        metadata={"dtype": feature.dtype, "status": feature.status, "interval": feature.refresh_interval}
+    ))
+
+    # 2. Group Node
+    if group:
+        grp_node_id = f"grp:{group.id}"
+        nodes.append(LineageNode(
+            id=grp_node_id,
+            label=group.name,
+            type="feature_group",
+            metadata={"environment": group.environment}
+        ))
+        edges.append(LineageEdge(source=grp_node_id, target=feat_node_id, label="contains"))
+
+    # 3. Source Tables
+    lineages = db.query(FeatureLineage).filter(FeatureLineage.feature_id == feature_id).all()
+    source_tables = {l.source_table for l in lineages} if lineages else set()
+    if not source_tables:
+        source_tables.add("feature_store.raw_events")
+
+    for tbl in source_tables:
+        src_id = f"source:{tbl}"
+        nodes.append(LineageNode(
+            id=src_id,
+            label=tbl,
+            type="source_table",
+            metadata={"storage": "PostgreSQL"}
+        ))
+        edges.append(LineageEdge(source=src_id, target=feat_node_id, label="transforms"))
+
+    # 4. Downstream Models
+    all_ml = db.query(ModelLineage).all()
+    consumed_version_ids = []
+    for ml in all_ml:
+        if ml.feature_ids_json and (str(feature_id) in ml.feature_ids_json or feature.name in ml.feature_ids_json):
+            consumed_version_ids.append(ml.model_version_id)
+
+    if consumed_version_ids:
+        versions = db.query(ModelVersion).filter(ModelVersion.id.in_(consumed_version_ids)).all()
+        for v in versions:
+            m = db.get(Model, v.model_id)
+            model_name = m.name if m else "ML Model"
+            m_node_id = f"model:{v.id}"
+            nodes.append(LineageNode(
+                id=m_node_id,
+                label=f"{model_name} (v{v.version})",
+                type="model",
+                metadata={"stage": v.stage}
+            ))
+            edges.append(LineageEdge(source=feat_node_id, target=m_node_id, label="feeds"))
+
+            if v.stage == "Production":
+                ep_node_id = f"endpoint:{v.id}"
+                nodes.append(LineageNode(
+                    id=ep_node_id,
+                    label=f"POST /predict ({model_name})",
+                    type="endpoint",
+                    metadata={"target": "Live Inference"}
+                ))
+                edges.append(LineageEdge(source=m_node_id, target=ep_node_id, label="serves"))
+
+    return LineageGraphOut(nodes=nodes, edges=edges)
 
 
 
