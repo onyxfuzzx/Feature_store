@@ -84,3 +84,51 @@ class FeatureDefinitionUpdate(ORMBase):
     validation_rules_json: str | None = None
 
 
+class BatchOnlineFeaturesRequest(ORMBase):
+    entity_keys: list[str]
+    features: list[str]  # feature IDs or names (e.g. 'customer_30d_spend' or 'group:name')
+
+
+class BatchOnlineFeaturesResponse(ORMBase):
+    entity_keys: list[str]
+    features: list[str]
+    values: dict[str, dict[str, str | None]]  # entity_key -> {feature_name: value}
+    read_latency_ms: float
+
+
+class AsOfJoinObservation(ORMBase):
+    entity_key: str
+    event_time: datetime
+
+
+class AsOfJoinRequest(ORMBase):
+    observations: list[AsOfJoinObservation]
+    features: list[str]  # feature IDs or names
+
+
+class AsOfJoinResponse(ORMBase):
+    joined_rows: list[dict[str, str | None]]
+    row_count: int
+    computation_time_ms: float
+
+
+class StreamIngestRecord(ORMBase):
+    entity_key: str
+    feature_id: UUID | None = None
+    feature_name: str | None = None
+    value: str | None = None
+    event_time: datetime | None = None
+
+
+class StreamIngestRequest(ORMBase):
+    records: list[StreamIngestRecord]
+    persist_offline: bool = True
+
+
+class StreamIngestResponse(ORMBase):
+    ingested_count: int
+    success: bool
+    timestamp: datetime
+
+
+

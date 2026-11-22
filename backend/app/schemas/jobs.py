@@ -29,3 +29,8 @@ class JobRunOut(ORMBase):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     log: str | None = None
+
+
+class JobOverviewItem(JobDefinitionOut):
+    recent_runs: list[JobRunOut] = []
+

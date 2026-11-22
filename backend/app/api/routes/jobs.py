@@ -10,7 +10,7 @@ from app.db.models.core import User
 from app.db.models.jobs import JobDefinition, JobRun
 from app.db.session import get_db
 from app.jobs.scheduler import _run_job, schedule_job
-from app.schemas.jobs import JobDefinitionCreate, JobDefinitionOut, JobRunOut
+from app.schemas.jobs import JobDefinitionCreate, JobDefinitionOut, JobOverviewItem, JobRunOut
 from app.services.audit import log_audit
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -23,6 +23,37 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 )
 def list_jobs(db: Session = Depends(get_db)):
     return db.query(JobDefinition).order_by(JobDefinition.created_at.desc()).all()
+
+
+@router.get(
+    "/overview",
+    response_model=list[JobOverviewItem],
+    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST))],
+)
+def get_jobs_overview(db: Session = Depends(get_db)):
+    jobs = db.query(JobDefinition).order_by(JobDefinition.created_at.desc()).all()
+    results = []
+    for job in jobs:
+        runs = (
+            db.query(JobRun)
+            .filter(JobRun.job_definition_id == job.id)
+            .order_by(JobRun.started_at.desc())
+            .limit(5)
+            .all()
+        )
+        results.append(
+            JobOverviewItem(
+                id=job.id,
+                name=job.name,
+                type=job.type,
+                cron=job.cron,
+                payload_json=job.payload_json,
+                is_active=job.is_active,
+                created_at=job.created_at,
+                recent_runs=runs,
+            )
+        )
+    return results
 
 
 @router.post(

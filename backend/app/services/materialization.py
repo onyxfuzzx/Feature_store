@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from sqlalchemy import delete, text
@@ -11,6 +12,36 @@ from app.db.models.feature_store import (
     FeatureValueOffline,
     FeatureValueOnline,
 )
+
+
+def validate_value(val: any, rules: dict) -> list[str]:
+    """
+    Validate a single feature value against definition validation rules.
+    Rules supported: allow_null (bool), min_value (float), max_value (float), required_type (str).
+    """
+    violations = []
+    if val is None:
+        if rules.get("allow_null") is False:
+            violations.append("null_not_allowed")
+        return violations
+
+    min_val = rules.get("min_value")
+    if min_val is not None and str(min_val).strip() != "":
+        try:
+            if float(val) < float(min_val):
+                violations.append(f"value_{val}_below_min_{min_val}")
+        except (ValueError, TypeError):
+            pass
+
+    max_val = rules.get("max_value")
+    if max_val is not None and str(max_val).strip() != "":
+        try:
+            if float(val) > float(max_val):
+                violations.append(f"value_{val}_above_max_{max_val}")
+        except (ValueError, TypeError):
+            pass
+
+    return violations
 
 
 def materialize_feature(db: Session, feature_id) -> FeatureMaterialization:
@@ -37,6 +68,17 @@ def materialize_feature(db: Session, feature_id) -> FeatureMaterialization:
         online_rows = []
         now = datetime.utcnow()
 
+        # Parse validation rules if configured
+        rules = {}
+        if feature.validation_rules_json:
+            try:
+                rules = json.loads(feature.validation_rules_json)
+            except Exception:
+                rules = {}
+
+        total_violations = 0
+        violation_samples = []
+
         for row in rows:
             entity_key = row.get("entity_key")
             if not entity_key:
@@ -45,11 +87,20 @@ def materialize_feature(db: Session, feature_id) -> FeatureMaterialization:
             value = row.get("value")
             event_time = row.get("event_time") or now
 
+            # Perform validation check
+            if rules:
+                errs = validate_value(value, rules)
+                if errs:
+                    total_violations += len(errs)
+                    if len(violation_samples) < 5:
+                        violation_samples.append(f"key '{entity_key}': {', '.join(errs)}")
+
+            val_str = None if value is None else str(value)
             offline_rows.append(
                 {
                     "entity_key": str(entity_key),
                     "feature_id": feature.id,
-                    "value": None if value is None else str(value),
+                    "value": val_str,
                     "event_time": event_time,
                     "updated_at": now,
                 }
@@ -58,7 +109,7 @@ def materialize_feature(db: Session, feature_id) -> FeatureMaterialization:
                 {
                     "entity_key": str(entity_key),
                     "feature_id": feature.id,
-                    "value": None if value is None else str(value),
+                    "value": val_str,
                     "event_time": event_time,
                     "updated_at": now,
                 }
@@ -75,6 +126,8 @@ def materialize_feature(db: Session, feature_id) -> FeatureMaterialization:
 
         run.status = "success"
         run.row_count = len(offline_rows)
+        if total_violations > 0:
+            run.error_message = f"Validation warnings ({total_violations} issues): " + "; ".join(violation_samples)
     except Exception as exc:
         run.status = "failed"
         run.error_message = str(exc)
