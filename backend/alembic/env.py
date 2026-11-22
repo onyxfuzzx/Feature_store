@@ -10,7 +10,8 @@ from app.core.config import settings  # noqa: E402
 from app.db.base import Base  # noqa: E402
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Escape % signs to avoid ConfigParser interpolation errors (e.g. %40 in passwords)
+config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 
