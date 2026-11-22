@@ -80,7 +80,8 @@ graph TD
 * **ORM & Migrations**: SQLAlchemy Core/ORM, Alembic database migration framework.
 * **Database**: Supabase PostgreSQL (cloud-hosted, PostgreSQL 15+).
 * **Background Jobs**: APScheduler (Advanced Python Scheduler) with Cron validation.
-* **Frontend Client**: React 18, Vite build tool, React Router v6, Lucide React (Icons), Vanilla CSS (premium theme styles).
+* **Frontend Client**: React 18, Vite build tool, React Router v6, Tailwind CSS v4, Lucide React (Icons).
+* **Python SDK**: `featurestore-sdk` client and CLI package.
 
 ---
 
@@ -91,6 +92,12 @@ Feature_store/
 │
 ├── database/
 │   └── schema.sql                 # PostgreSQL schema for Supabase initialization
+│
+├── sdk/                           # Official Python SDK & CLI tool
+│   ├── featurestore/
+│   │   ├── client.py              # FeatureStoreClient implementation
+│   │   └── cli.py                 # CLI entrypoint (login, features, models, get-online)
+│   └── pyproject.toml
 │
 ├── backend/
 │   ├── alembic.ini                # Alembic database migration config file

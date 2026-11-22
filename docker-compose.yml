@@ -1,21 +1,57 @@
-# docker-compose.yml
-# MS SQL Server has been replaced by Supabase PostgreSQL (cloud-hosted).
-# This file is kept for reference. To run a local PostgreSQL for development,
-# uncomment the service below and set DATABASE_URL in backend/.env accordingly.
+version: "3.9"
 
-# version: "3.9"
-# services:
-#   db:
-#     image: postgres:16
-#     container_name: feature_store_pg
-#     environment:
-#       POSTGRES_USER: postgres
-#       POSTGRES_PASSWORD: Your_password123
-#       POSTGRES_DB: feature_store
-#     ports:
-#       - "5432:5432"
-#     volumes:
-#       - pg_data:/var/lib/postgresql/data
-#
-# volumes:
-#   pg_data:
+services:
+  # Supabase / PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: featureops_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Your_password123}
+      POSTGRES_DB: ${POSTGRES_DB:-feature_store}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis (Optional Low-Latency Online Store)
+  redis:
+    image: redis:7-alpine
+    container_name: featureops_redis
+    ports:
+      - "6379:6379"
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: featureops_backend
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-Your_password123}@db:5432/${POSTGRES_DB:-feature_store}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      CORS_ORIGINS: "*"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Frontend Client
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: featureops_frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  pg_data:

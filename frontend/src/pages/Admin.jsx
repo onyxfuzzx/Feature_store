@@ -1,422 +1,372 @@
-import { useEffect, useState } from "react";
-import { fetchApi } from "../api";
-import { IconClose, IconUsers, IconAudit, IconRefresh, IconKey } from "../components/Icons";
-
-const ROLES = ["admin", "ml_engineer", "data_scientist", "analyst"];
-
-function Modal({ title, onClose, children }) {
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2 className="modal-title">{title}</h2>
-          <button className="modal-close" onClick={onClose} aria-label="Close modal"><IconClose /></button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function TabButton({ active, onClick, children }) {
-  return (
-    <button className={`tab-btn${active ? " active" : ""}`} onClick={onClick}>{children}</button>
-  );
-}
+import React, { useEffect, useState } from "react";
+import { fetchApi, getActiveUser } from "../api";
+import { Card, CardHeader } from "../components/ui/Card";
+import { Button } from "../components/ui/Button";
+import { Badge } from "../components/ui/Badge";
+import { Modal } from "../components/ui/Modal";
+import { Shield, Key, Users, History, Plus, Copy, Check, AlertCircle } from "lucide-react";
 
 export default function Admin() {
   const [tab, setTab] = useState("users");
   const [users, setUsers] = useState([]);
-  const [auditLogs, setAuditLogs] = useState([]);
   const [apiKeys, setApiKeys] = useState([]);
-  
-  const [loadingUsers, setLoadingUsers] = useState(true);
-  const [loadingLogs, setLoadingLogs] = useState(false);
-  const [loadingKeys, setLoadingKeys] = useState(false);
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
 
+  // User creation modal
   const [showUserModal, setShowUserModal] = useState(false);
-  const [showKeyModal, setShowKeyModal] = useState(false);
-
   const [userForm, setUserForm] = useState({ name: "", email: "", password: "", roles: ["analyst"] });
-  const [keyForm, setKeyForm] = useState({ name: "" });
-  const [createdKeyPlain, setCreatedKeyPlain] = useState(null);
+  const [submittingUser, setSubmittingUser] = useState(false);
 
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState(null);
-  const [logFilter, setLogFilter] = useState("");
+  // Key creation modal
+  const [showKeyModal, setShowKeyModal] = useState(false);
+  const [keyName, setKeyName] = useState("");
+  const [createdKey, setCreatedKey] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [submittingKey, setSubmittingKey] = useState(false);
 
-  const loadUsers = async () => {
-    setLoadingUsers(true);
+  const currentUser = getActiveUser();
+
+  const loadData = async () => {
     try {
-      const data = await fetchApi("/users");
-      setUsers(data);
-    } catch {
-      // ignore
+      setLoading(true);
+      if (tab === "users") {
+        const u = await fetchApi("/users");
+        setUsers(u);
+      } else if (tab === "keys") {
+        const k = await fetchApi("/api-keys");
+        setApiKeys(k);
+      } else if (tab === "audit") {
+        const a = await fetchApi("/users/audit-logs");
+        setAuditLogs(a);
+      }
+    } catch (err) {
+      console.error(err);
     } finally {
-      setLoadingUsers(false);
-    }
-  };
-
-  const loadLogs = async () => {
-    setLoadingLogs(true);
-    try {
-      const data = await fetchApi("/users/audit-logs");
-      setAuditLogs(data);
-    } catch {
-      // ignore
-    } finally {
-      setLoadingLogs(false);
-    }
-  };
-
-  const loadKeys = async () => {
-    setLoadingKeys(true);
-    try {
-      const data = await fetchApi("/api-keys");
-      setApiKeys(data);
-    } catch {
-      // ignore
-    } finally {
-      setLoadingKeys(false);
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadUsers();
-  }, []);
-
-  useEffect(() => {
-    if (tab === "audit") loadLogs();
-    if (tab === "keys") loadKeys();
+    loadData();
   }, [tab]);
 
   const handleCreateUser = async (e) => {
     e.preventDefault();
-    setSubmitting(true);
-    setSubmitError(null);
+    setSubmittingUser(true);
     try {
-      await fetchApi("/users", { method: "POST", body: JSON.stringify(userForm) });
+      await fetchApi("/users", {
+        method: "POST",
+        body: JSON.stringify(userForm),
+      });
       setShowUserModal(false);
       setUserForm({ name: "", email: "", password: "", roles: ["analyst"] });
-      await loadUsers();
+      await loadData();
     } catch (err) {
-      setSubmitError(err.message);
+      alert(err.message);
     } finally {
-      setSubmitting(false);
+      setSubmittingUser(false);
     }
   };
 
   const handleCreateKey = async (e) => {
     e.preventDefault();
-    setSubmitting(true);
-    setSubmitError(null);
+    setSubmittingKey(true);
     try {
-      const data = await fetchApi("/api-keys", { method: "POST", body: JSON.stringify(keyForm) });
-      setCreatedKeyPlain(data.plain_key);
-      setKeyForm({ name: "" });
-      await loadKeys();
+      const res = await fetchApi("/api-keys", {
+        method: "POST",
+        body: JSON.stringify({ name: keyName }),
+      });
+      setCreatedKey(res.api_key);
+      setKeyName("");
+      await loadData();
     } catch (err) {
-      setSubmitError(err.message);
+      alert(err.message);
     } finally {
-      setSubmitting(false);
+      setSubmittingKey(false);
     }
   };
 
-  const handleRevokeKey = async (keyId) => {
-    if (!window.confirm("Are you sure you want to revoke this API key? Scripts using it will fail.")) return;
-    try {
-      await fetchApi(`/api-keys/${keyId}`, { method: "DELETE" });
-      await loadKeys();
-    } catch (err) {
-      alert("Failed to revoke key: " + err.message);
-    }
-  };
-
-  const filteredLogs = auditLogs.filter((l) => {
-    if (!logFilter) return true;
-    return (
-      l.action.toLowerCase().includes(logFilter.toLowerCase()) ||
-      l.entity_type.toLowerCase().includes(logFilter.toLowerCase())
-    );
-  });
-
-  const actionColor = (action) => {
-    if (action.startsWith("CREATE")) return "#0d7a66";
-    if (action.startsWith("PROMOTE") || action.startsWith("LINK")) return "#b06000";
-    if (action.startsWith("MATERIALIZE") || action.startsWith("RUN")) return "#5b21b6";
-    if (action.startsWith("REVOKE")) return "#be123c";
-    return "#444";
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   return (
-    <section>
-      <div className="page-header">
+    <div className="space-y-6 animate-in fade-in duration-300">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-zinc-800/80">
         <div>
-          <h1 className="page-title">Administration</h1>
-          <p className="subtle">Manage users, programmatic API keys, and review the complete audit trail.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-100">Administration</h1>
+          <p className="text-sm text-zinc-400 mt-1">
+            Manage users, RBAC permissions, programmatic API keys, and compliance audit logs.
+          </p>
         </div>
+        {tab === "users" && (
+          <Button variant="primary" onClick={() => setShowUserModal(true)}>
+            <Plus className="w-4 h-4" /> Add User
+          </Button>
+        )}
+        {tab === "keys" && (
+          <Button variant="primary" onClick={() => { setCreatedKey(null); setShowKeyModal(true); }}>
+            <Plus className="w-4 h-4" /> Generate API Key
+          </Button>
+        )}
       </div>
 
-      <div className="tab-bar">
-        <TabButton active={tab === "users"} onClick={() => setTab("users")}>
-          <IconUsers /> Users
-        </TabButton>
-        <TabButton active={tab === "keys"} onClick={() => setTab("keys")}>
-          <IconKey /> API Keys
-        </TabButton>
-        <TabButton active={tab === "audit"} onClick={() => setTab("audit")}>
-          <IconAudit /> Audit Logs
-        </TabButton>
-      </div>
-
-      {tab === "users" && (
-        <div style={{ marginTop: 16 }}>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
-            <button className="button" onClick={() => setShowUserModal(true)}>+ Add User</button>
-          </div>
-          {loadingUsers && <div className="loading-pulse">Loading users…</div>}
-          {!loadingUsers && (
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Roles</th>
-                    <th>Status</th>
-                    <th>Created</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map((u) => (
-                    <tr key={u.id}>
-                      <td><strong>{u.name}</strong></td>
-                      <td className="subtle">{u.email}</td>
-                      <td>
-                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                          {u.roles.map((r) => (
-                            <span key={r} className="badge" style={{ fontSize: "0.75rem" }}>{r}</span>
-                          ))}
-                        </div>
-                      </td>
-                      <td>
-                        <span className="badge" style={u.is_active
-                          ? { background: "rgba(90,219,195,0.18)", color: "#0d7a66" }
-                          : { background: "rgba(200,200,200,0.2)", color: "#666" }
-                        }>
-                          {u.is_active ? "Active" : "Inactive"}
-                        </span>
-                      </td>
-                      <td className="subtle">{u.created_at?.slice(0, 10)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab === "keys" && (
-        <div style={{ marginTop: 16 }}>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
-            <button className="button" onClick={() => { setCreatedKeyPlain(null); setShowKeyModal(true); }}>+ Generate API Key</button>
-          </div>
-          {loadingKeys && <div className="loading-pulse">Loading API keys…</div>}
-          {!loadingKeys && (
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Key Name</th>
-                    <th>Status</th>
-                    <th>Created At</th>
-                    <th style={{ textAlign: "right" }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {apiKeys.length === 0 && (
-                    <tr><td colSpan={4} style={{ textAlign: "center", padding: 32, color: "#888" }}>No active API keys. Generate one for CI/CD or scripts.</td></tr>
-                  )}
-                  {apiKeys.map((k) => (
-                    <tr key={k.id}>
-                      <td><strong>{k.name}</strong></td>
-                      <td>
-                        <span className="badge" style={{ background: "rgba(90,219,195,0.18)", color: "#0d7a66" }}>
-                          Active
-                        </span>
-                      </td>
-                      <td className="subtle">{k.created_at?.slice(0, 16).replace("T", " ")}</td>
-                      <td style={{ textAlign: "right" }}>
-                        <button className="button button-sm" style={{ background: "#f43f5e" }} onClick={() => handleRevokeKey(k.id)}>
-                          Revoke
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab === "audit" && (
-        <div style={{ marginTop: 16 }}>
-          <div className="filter-bar" style={{ marginBottom: 12 }}>
-            <input
-              className="filter-input"
-              placeholder="Filter by action or entity type…"
-              value={logFilter}
-              onChange={(e) => setLogFilter(e.target.value)}
-            />
-            <span className="subtle">{filteredLogs.length} entries</span>
-            <button className="button button-sm" onClick={loadLogs}>
-              <IconRefresh /> Refresh
+      {/* Tabs */}
+      <div className="flex gap-2 border-b border-zinc-800/80">
+        {[
+          { key: "users", label: "Users & RBAC Roles", icon: Users },
+          { key: "keys", label: "Programmatic API Keys", icon: Key },
+          { key: "audit", label: "Audit Logs", icon: History },
+        ].map((t) => {
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`flex items-center gap-2 px-4 py-2 text-xs font-medium border-b-2 transition -mb-px ${
+                tab === t.key
+                  ? "border-emerald-500 text-emerald-400"
+                  : "border-transparent text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              {t.label}
             </button>
-          </div>
-          {loadingLogs && <div className="loading-pulse">Loading audit logs…</div>}
-          {!loadingLogs && (
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Action</th>
-                    <th>Entity Type</th>
-                    <th>Entity ID</th>
-                    <th>Payload</th>
-                    <th>Timestamp</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredLogs.length === 0 && (
-                    <tr><td colSpan={5} style={{ textAlign: "center", padding: 32, color: "#888" }}>No audit logs found.</td></tr>
-                  )}
-                  {filteredLogs.map((log) => (
-                    <tr key={log.id}>
-                      <td>
-                        <span style={{ color: actionColor(log.action), fontWeight: 700, fontSize: "0.82rem" }}>
-                          {log.action}
+          );
+        })}
+      </div>
+
+      {/* Tab: Users */}
+      {tab === "users" && (
+        <Card className="p-0 overflow-hidden">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="border-b border-zinc-800 bg-zinc-950/50 text-zinc-400 font-mono text-[11px] uppercase">
+                <th className="py-3 px-4 font-semibold">User Name</th>
+                <th className="py-3 px-4 font-semibold">Email</th>
+                <th className="py-3 px-4 font-semibold">Assigned Roles</th>
+                <th className="py-3 px-4 font-semibold">Status</th>
+                <th className="py-3 px-4 font-semibold">Created</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-800/60">
+              {users.map((u) => (
+                <tr key={u.id} className="hover:bg-zinc-800/30">
+                  <td className="py-3 px-4 font-medium text-zinc-200">{u.name}</td>
+                  <td className="py-3 px-4 text-zinc-400 font-mono">{u.email}</td>
+                  <td className="py-3 px-4">
+                    <div className="flex gap-1.5 flex-wrap">
+                      {u.roles?.map((r) => (
+                        <span key={r} className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 font-mono text-[10px]">
+                          {r}
                         </span>
-                      </td>
-                      <td><code className="code-tag">{log.entity_type}</code></td>
-                      <td><code style={{ fontSize: "0.72rem", color: "#888" }}>{log.entity_id.slice(0, 8)}…</code></td>
-                      <td>
-                        {log.payload_json ? (
-                          <span className="subtle" style={{ fontSize: "0.78rem" }}>
-                            {log.payload_json.slice(0, 60)}{log.payload_json.length > 60 ? "…" : ""}
-                          </span>
-                        ) : "—"}
-                      </td>
-                      <td className="subtle">{log.created_at?.slice(0, 16).replace("T", " ")}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="py-3 px-4">
+                    <Badge variant={u.is_active ? "success" : "default"}>
+                      {u.is_active ? "Active" : "Inactive"}
+                    </Badge>
+                  </td>
+                  <td className="py-3 px-4 font-mono text-zinc-400">
+                    {u.created_at ? u.created_at.slice(0, 10) : "N/A"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
       )}
 
-      {showUserModal && (
-        <Modal title="Add Platform User" onClose={() => setShowUserModal(false)}>
-          <form onSubmit={handleCreateUser} className="modal-form">
-            {submitError && <div className="error-alert">{submitError}</div>}
-            <div className="form-row">
-              <div className="form-group">
-                <label>Full Name *</label>
-                <input value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} required placeholder="Jane Smith" />
-              </div>
-              <div className="form-group">
-                <label>Email *</label>
-                <input type="email" value={userForm.email} onChange={(e) => setUserForm({ ...userForm, email: e.target.value })} required placeholder="jane@company.com" />
-              </div>
+      {/* Tab: API Keys */}
+      {tab === "keys" && (
+        <Card className="p-0 overflow-hidden">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="border-b border-zinc-800 bg-zinc-950/50 text-zinc-400 font-mono text-[11px] uppercase">
+                <th className="py-3 px-4 font-semibold">Key Name</th>
+                <th className="py-3 px-4 font-semibold">Status</th>
+                <th className="py-3 px-4 font-semibold">Created</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-800/60">
+              {apiKeys.length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="py-8 text-center text-zinc-500">
+                    No active API keys created yet.
+                  </td>
+                </tr>
+              ) : (
+                apiKeys.map((k) => (
+                  <tr key={k.id} className="hover:bg-zinc-800/30">
+                    <td className="py-3 px-4 font-medium text-zinc-200 flex items-center gap-2">
+                      <Key className="w-3.5 h-3.5 text-zinc-500" />
+                      <span>{k.name}</span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <Badge variant={k.is_active ? "success" : "default"}>
+                        {k.is_active ? "Active" : "Revoked"}
+                      </Badge>
+                    </td>
+                    <td className="py-3 px-4 font-mono text-zinc-400">
+                      {k.created_at ? k.created_at.slice(0, 10) : "N/A"}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </Card>
+      )}
+
+      {/* Tab: Audit Logs */}
+      {tab === "audit" && (
+        <Card className="p-0 overflow-hidden">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="border-b border-zinc-800 bg-zinc-950/50 text-zinc-400 font-mono text-[11px] uppercase">
+                <th className="py-3 px-4 font-semibold">Timestamp</th>
+                <th className="py-3 px-4 font-semibold">Action</th>
+                <th className="py-3 px-4 font-semibold">Entity</th>
+                <th className="py-3 px-4 font-semibold">Payload Summary</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-800/60">
+              {auditLogs.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="py-8 text-center text-zinc-500">
+                    No audit records logged yet.
+                  </td>
+                </tr>
+              ) : (
+                auditLogs.map((log) => (
+                  <tr key={log.id} className="hover:bg-zinc-800/30 font-mono">
+                    <td className="py-3 px-4 text-zinc-400 text-[11px]">
+                      {log.created_at ? log.created_at.slice(0, 19).replace("T", " ") : "N/A"}
+                    </td>
+                    <td className="py-3 px-4 text-emerald-400 font-semibold">{log.action}</td>
+                    <td className="py-3 px-4 text-zinc-300">{log.entity_type}</td>
+                    <td className="py-3 px-4 text-zinc-400 text-[10px] truncate max-w-xs">
+                      {log.payload_json || "—"}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </Card>
+      )}
+
+      {/* Modal: New User */}
+      <Modal isOpen={showUserModal} title="Create User Account" onClose={() => setShowUserModal(false)}>
+        <form onSubmit={handleCreateUser} className="space-y-4 text-xs">
+          <div>
+            <label className="block font-medium text-zinc-300 mb-1">Full Name</label>
+            <input
+              type="text"
+              required
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+              placeholder="e.g. Jane Doe"
+              value={userForm.name}
+              onChange={(e) => setUserForm({ ...userForm, name: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block font-medium text-zinc-300 mb-1">Email</label>
+            <input
+              type="email"
+              required
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+              placeholder="jane@company.com"
+              value={userForm.email}
+              onChange={(e) => setUserForm({ ...userForm, email: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block font-medium text-zinc-300 mb-1">Password</label>
+            <input
+              type="password"
+              required
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+              placeholder="••••••••••••"
+              value={userForm.password}
+              onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block font-medium text-zinc-300 mb-1">Role Assignment</label>
+            <select
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+              value={userForm.roles[0]}
+              onChange={(e) => setUserForm({ ...userForm, roles: [e.target.value] })}
+            >
+              <option value="analyst">Analyst (Read-only)</option>
+              <option value="data_scientist">Data Scientist</option>
+              <option value="ml_engineer">ML Engineer</option>
+              <option value="admin">Admin (Full Control)</option>
+            </select>
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800">
+            <Button variant="secondary" onClick={() => setShowUserModal(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" loading={submittingUser}>
+              Create User
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal: New API Key */}
+      <Modal isOpen={showKeyModal} title="Generate API Key" onClose={() => setShowKeyModal(false)}>
+        {createdKey ? (
+          <div className="space-y-4 text-xs">
+            <div className="p-3 bg-emerald-950/40 border border-emerald-800/60 rounded-lg text-emerald-300">
+              <span className="font-semibold block mb-1">API Key Generated Successfully</span>
+              <p className="text-[11px] text-zinc-400">
+                Copy this key immediately. You will not be able to see it again.
+              </p>
             </div>
-            <div className="form-group">
-              <label>Password *</label>
-              <input type="password" value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })} required placeholder="min 8 characters" />
+            <div className="flex items-center gap-2 p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg">
+              <code className="flex-1 font-mono text-[11px] text-emerald-400 truncate">{createdKey}</code>
+              <Button size="sm" variant="secondary" onClick={() => copyToClipboard(createdKey)}>
+                {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? "Copied" : "Copy"}
+              </Button>
             </div>
-            <div className="form-group">
-              <label>Roles</label>
-              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 6 }}>
-                {ROLES.map((r) => (
-                  <label key={r} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={userForm.roles.includes(r)}
-                      onChange={(e) => {
-                        const newRoles = e.target.checked
-                          ? [...userForm.roles, r]
-                          : userForm.roles.filter((x) => x !== r);
-                        setUserForm({ ...userForm, roles: newRoles });
-                      }}
-                    />
-                    {r}
-                  </label>
-                ))}
-              </div>
+            <div className="flex justify-end pt-3 border-t border-zinc-800">
+              <Button variant="secondary" onClick={() => setShowKeyModal(false)}>
+                Done
+              </Button>
             </div>
-            <div className="modal-actions">
-              <button type="button" className="button button-outline" onClick={() => setShowUserModal(false)}>Cancel</button>
-              <button type="submit" className="button" disabled={submitting}>{submitting ? "Creating…" : "Add User"}</button>
+          </div>
+        ) : (
+          <form onSubmit={handleCreateKey} className="space-y-4 text-xs">
+            <div>
+              <label className="block font-medium text-zinc-300 mb-1">Descriptive Key Name</label>
+              <input
+                type="text"
+                required
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+                placeholder="e.g. CI-CD-Inference-Key"
+                value={keyName}
+                onChange={(e) => setKeyName(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800">
+              <Button variant="secondary" onClick={() => setShowKeyModal(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" loading={submittingKey}>
+                Generate
+              </Button>
             </div>
           </form>
-        </Modal>
-      )}
-
-      {showKeyModal && (
-        <Modal title="Generate Programmatic API Key" onClose={() => setShowKeyModal(false)}>
-          {!createdKeyPlain ? (
-            <form onSubmit={handleCreateKey} className="modal-form">
-              {submitError && <div className="error-alert">{submitError}</div>}
-              <div className="form-group">
-                <label>API Key Name *</label>
-                <input
-                  value={keyForm.name}
-                  onChange={(e) => setKeyForm({ name: e.target.value })}
-                  required
-                  placeholder="e.g. CI-CD-Deployment-Key"
-                />
-                <span className="subtle" style={{ fontSize: "0.75rem", marginTop: 4 }}>
-                  Use a clear description indicating where this key will be used.
-                </span>
-              </div>
-              <div className="modal-actions">
-                <button type="button" className="button button-outline" onClick={() => setShowKeyModal(false)}>Cancel</button>
-                <button type="submit" className="button" disabled={submitting}>{submitting ? "Generating…" : "Generate"}</button>
-              </div>
-            </form>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <div style={{ background: "rgba(22, 101, 52, 0.1)", border: "1px solid #16a34a", padding: 12, borderRadius: 6, color: "#16a34a", fontSize: "0.88rem" }}>
-                <strong>API Key generated successfully!</strong> Make sure to copy it now. You will not be able to see it again.
-              </div>
-              <div className="form-group">
-                <label>API Key</label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input
-                    readOnly
-                    value={createdKeyPlain}
-                    style={{ fontFamily: "monospace", flex: 1, padding: "8px 12px", background: "#1e1e1e", color: "#e0e0e0", border: "1px solid #333" }}
-                  />
-                  <button
-                    className="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(createdKeyPlain);
-                      alert("Copied to clipboard!");
-                    }}
-                  >
-                    Copy
-                  </button>
-                </div>
-              </div>
-              <div className="modal-actions">
-                <button type="button" className="button" onClick={() => setShowKeyModal(false)}>Done</button>
-              </div>
-            </div>
-          )}
-        </Modal>
-      )}
-    </section>
+        )}
+      </Modal>
+    </div>
   );
 }

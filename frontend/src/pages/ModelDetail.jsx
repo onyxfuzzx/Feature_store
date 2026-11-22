@@ -1,495 +1,345 @@
-import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import { fetchApi } from "../api";
-import { IconClose, IconArrowRight, IconLightning, IconCheck } from "../components/Icons";
-
-const STAGES = ["Staging", "Production", "Archived"];
-
-function Modal({ title, onClose, children }) {
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2 className="modal-title">{title}</h2>
-          <button className="modal-close" onClick={onClose} aria-label="Close modal"><IconClose /></button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function stagePillStyle(stage) {
-  if (stage === "Production") return { background: "rgba(90,219,195,0.18)", color: "#0d7a66" };
-  if (stage === "Staging") return { background: "rgba(255,176,103,0.2)", color: "#b06000" };
-  return { background: "rgba(200,200,200,0.2)", color: "#666" };
-}
-
-function TabButton({ active, onClick, children }) {
-  return (
-    <button className={`tab-btn${active ? " active" : ""}`} onClick={onClick}>
-      {children}
-    </button>
-  );
-}
-
-function DriftChart({ history, thresholdNo, thresholdMod }) {
-  const maxPsi = 0.3;
-  const points = history.map((h, index) => {
-    const x = (index / (history.length - 1)) * 260 + 20;
-    const y = 100 - (h.psi / maxPsi) * 80 - 10;
-    return { x, y, psi: h.psi, date: h.date };
-  });
-
-  const pathD = points.reduce((acc, p, i) => {
-    return i === 0 ? `M ${p.x} ${p.y}` : `${acc} L ${p.x} ${p.y}`;
-  }, "");
-
-  const areaD = pathD ? `${pathD} L ${points[points.length - 1].x} 90 L ${points[0].x} 90 Z` : "";
-
-  const yNo = 100 - (thresholdNo / maxPsi) * 80 - 10;
-  const yMod = 100 - (thresholdMod / maxPsi) * 80 - 10;
-
-  return (
-    <div style={{ width: "100%", position: "relative" }}>
-      <svg viewBox="0 0 300 100" style={{ width: "100%", height: 120, background: "#1b1b1f", borderRadius: 6 }}>
-        <line x1="10" y1={yNo} x2="290" y2={yNo} stroke="rgba(217, 119, 6, 0.3)" strokeDasharray="3,3" strokeWidth={1} />
-        <line x1="10" y1={yMod} x2="290" y2={yMod} stroke="rgba(225, 29, 72, 0.3)" strokeDasharray="3,3" strokeWidth={1} />
-        
-        {areaD && <path d={areaD} fill="url(#driftGradient)" opacity={0.15} />}
-        {pathD && <path d={pathD} fill="none" stroke="#6366f1" strokeWidth={2} />}
-
-        {points.map((p, i) => (
-          <circle key={i} cx={p.x} cy={p.y} r={3} fill="#a5b4fc" />
-        ))}
-
-        <defs>
-          <linearGradient id="driftGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#6366f1" />
-            <stop offset="100%" stopColor="#6366f1" stopOpacity={0} />
-          </linearGradient>
-        </defs>
-      </svg>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.68rem", color: "#888", marginTop: 4, padding: "0 6px" }}>
-        <span>{history[0].date}</span>
-        <span>{history[history.length - 1].date}</span>
-      </div>
-    </div>
-  );
-}
+import React, { useEffect, useState } from "react";
+import { useParams, Link } from "react-router-dom";
+import { fetchApi, getActiveUser } from "../api";
+import { Card, CardHeader } from "../components/ui/Card";
+import { Button } from "../components/ui/Button";
+import { Badge } from "../components/ui/Badge";
+import { Modal } from "../components/ui/Modal";
+import {
+  Cpu,
+  Plus,
+  ArrowRight,
+  TrendingUp,
+  Download,
+  Upload,
+  AlertTriangle,
+  CheckCircle2,
+  Layers,
+  ArrowUpRight,
+} from "lucide-react";
 
 export default function ModelDetail() {
   const { id } = useParams();
   const [model, setModel] = useState(null);
   const [versions, setVersions] = useState([]);
-  const [selectedVersion, setSelectedVersion] = useState(null);
-  const [versionDetail, setVersionDetail] = useState(null);
-  const [loading, setLoading] = useState(true);
-  
-  const [mainTab, setMainTab] = useState("details");
   const [driftData, setDriftData] = useState(null);
-  const [loadingDrift, setLoadingDrift] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState("versions");
 
-  const [showVersionModal, setShowVersionModal] = useState(false);
-  const [showLineageModal, setShowLineageModal] = useState(false);
-  const [promotingTo, setPromotingTo] = useState("");
+  // Promote Modal
+  const [showPromoteModal, setShowPromoteModal] = useState(false);
+  const [selectedVersion, setSelectedVersion] = useState(null);
+  const [promoteStage, setPromoteStage] = useState("Production");
   const [promoting, setPromoting] = useState(false);
-  
-  const [versionForm, setVersionForm] = useState({
-    version: "", stage: "Staging", metrics_json: "", params_json: "", artifact_uri: ""
-  });
-  const [lineageForm, setLineageForm] = useState({ feature_ids_json: "", dataset_uri: "" });
-  
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState(null);
 
-  const load = async () => {
+  // New Version Modal
+  const [showVersionModal, setShowVersionModal] = useState(false);
+  const [versionForm, setVersionForm] = useState({
+    version: "",
+    stage: "Staging",
+    metrics_json: '{"roc_auc": 0.92, "precision": 0.88}',
+    params_json: '{"n_estimators": 200, "max_depth": 6}',
+  });
+  const [submittingVersion, setSubmittingVersion] = useState(false);
+
+  const user = getActiveUser();
+  const canEdit = user?.roles?.some((r) => ["admin", "ml_engineer"].includes(r));
+
+  const loadData = async () => {
     try {
-      const [m, v] = await Promise.all([
+      setLoading(true);
+      const [m, v, d] = await Promise.all([
         fetchApi(`/models/${id}`),
         fetchApi(`/models/${id}/versions`),
+        fetchApi(`/models/${id}/drift`),
       ]);
       setModel(m);
       setVersions(v);
-      if (v.length > 0) {
-        await selectVersion(v[0]);
-      }
-    } catch {
-      // ignore
+      setDriftData(d);
+    } catch (err) {
+      console.error(err);
     } finally {
       setLoading(false);
     }
   };
 
-  const loadDrift = async () => {
-    setLoadingDrift(true);
-    try {
-      const data = await fetchApi(`/models/${id}/drift`);
-      setDriftData(data);
-    } catch {
-      // ignore
-    } finally {
-      setLoadingDrift(false);
-    }
-  };
-
-  const selectVersion = async (ver) => {
-    setSelectedVersion(ver);
-    try {
-      const detail = await fetchApi(`/models/versions/${ver.id}/detail`);
-      setVersionDetail(detail);
-      setPromotingTo(ver.stage);
-    } catch {
-      setVersionDetail(null);
-    }
-  };
-
-  useEffect(() => { load(); }, [id]);
-
   useEffect(() => {
-    if (mainTab === "monitoring") {
-      loadDrift();
-    }
-  }, [mainTab]);
+    loadData();
+  }, [id]);
 
-  const handleCreateVersion = async (e) => {
+  const handlePromote = async (e) => {
     e.preventDefault();
-    setSubmitting(true);
-    setSubmitError(null);
-    try {
-      const payload = {
-        ...versionForm,
-        metrics_json: versionForm.metrics_json || null,
-        params_json: versionForm.params_json || null,
-        artifact_uri: versionForm.artifact_uri || null,
-      };
-      await fetchApi(`/models/${id}/versions`, { method: "POST", body: JSON.stringify(payload) });
-      setShowVersionModal(false);
-      setVersionForm({ version: "", stage: "Staging", metrics_json: "", params_json: "", artifact_uri: "" });
-      await load();
-    } catch (err) {
-      setSubmitError(err.message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handlePromote = async () => {
-    if (!selectedVersion || !promotingTo) return;
+    if (!selectedVersion) return;
     setPromoting(true);
     try {
-      await fetchApi(`/models/${id}/versions/${selectedVersion.id}/stage`, {
-        method: "POST",
-        body: JSON.stringify({ to_stage: promotingTo }),
+      await fetchApi(`/models/versions/${selectedVersion.id}/stage`, {
+        method: "PUT",
+        body: JSON.stringify({ stage: promoteStage }),
       });
-      await load();
-    } catch {
-      // ignore
+      setShowPromoteModal(false);
+      await loadData();
+    } catch (err) {
+      alert(err.message);
     } finally {
       setPromoting(false);
     }
   };
 
-  const handleSaveLineage = async (e) => {
+  const handleCreateVersion = async (e) => {
     e.preventDefault();
-    setSubmitting(true);
+    setSubmittingVersion(true);
     try {
-      await fetchApi(`/models/versions/${selectedVersion.id}/lineage`, {
+      await fetchApi(`/models/${id}/versions`, {
         method: "POST",
-        body: JSON.stringify({
-          feature_ids_json: lineageForm.feature_ids_json || null,
-          dataset_uri: lineageForm.dataset_uri || null,
-        }),
+        body: JSON.stringify(versionForm),
       });
-      setShowLineageModal(false);
-      await selectVersion(selectedVersion);
-    } catch {
-      // ignore
+      setShowVersionModal(false);
+      setVersionForm({
+        version: "",
+        stage: "Staging",
+        metrics_json: '{"roc_auc": 0.92, "precision": 0.88}',
+        params_json: '{"n_estimators": 200, "max_depth": 6}',
+      });
+      await loadData();
+    } catch (err) {
+      alert(err.message);
     } finally {
-      setSubmitting(false);
+      setSubmittingVersion(false);
     }
   };
 
-  if (loading) return <div className="loading-pulse">Loading model…</div>;
-  if (!model) return <div className="error-alert">Model not found.</div>;
+  if (loading) {
+    return <div className="py-20 text-center text-sm text-zinc-500">Loading model details…</div>;
+  }
 
-  const envText = model.environment === "prod" ? "Production" : model.environment === "staging" ? "Staging" : "Development";
+  if (!model) {
+    return (
+      <div className="py-20 text-center text-sm text-zinc-500">
+        Model not found. <Link to="/models" className="text-emerald-400">Back to Registry</Link>
+      </div>
+    );
+  }
 
   return (
-    <section>
-      <div className="page-header">
+    <div className="space-y-6 animate-in fade-in duration-300">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-zinc-800/80">
         <div>
-          <h1 className="page-title">{model.name}</h1>
-          <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 4 }}>
-            <span className="badge" style={
-              model.environment === "prod"
-                ? { background: "rgba(225,29,72,0.15)", color: "#e11d48" }
-                : model.environment === "staging"
-                ? { background: "rgba(217,119,6,0.15)", color: "#d97706" }
-                : { background: "rgba(2,132,199,0.15)", color: "#0284c7" }
-            }>
-              {envText}
-            </span>
-            <span className="subtle">{model.description || "No description."}</span>
+          <div className="flex items-center gap-2 mb-1">
+            <Link to="/models" className="text-xs text-zinc-400 hover:text-zinc-200 transition">
+              Model Registry
+            </Link>
+            <span className="text-zinc-600">/</span>
+            <span className="text-xs font-mono text-indigo-400">{model.name}</span>
           </div>
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-100 flex items-center gap-3">
+            <span>{model.name}</span>
+            <Badge variant={model.environment === "production" ? "success" : "default"}>{model.environment}</Badge>
+          </h1>
+          <p className="text-sm text-zinc-400 mt-1">{model.description || "No description provided."}</p>
         </div>
-        {mainTab === "details" && (
-          <button className="button" onClick={() => setShowVersionModal(true)}>+ Add Version</button>
+
+        {canEdit && (
+          <Button variant="primary" onClick={() => setShowVersionModal(true)}>
+            <Plus className="w-4 h-4" /> New Version
+          </Button>
         )}
       </div>
 
-      <div className="tab-bar" style={{ marginBottom: 16 }}>
-        <TabButton active={mainTab === "details"} onClick={() => setMainTab("details")}>Model Versions</TabButton>
-        <TabButton active={mainTab === "monitoring"} onClick={() => setMainTab("monitoring")}>Drift Monitoring</TabButton>
+      {/* Tabs */}
+      <div className="flex gap-2 border-b border-zinc-800/80">
+        {[
+          { key: "versions", label: `Versions (${versions.length})` },
+          { key: "drift", label: "Population Stability & Drift (PSI)" },
+        ].map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setActiveTab(t.key)}
+            className={`px-4 py-2 text-xs font-medium border-b-2 transition -mb-px ${
+              activeTab === t.key
+                ? "border-emerald-500 text-emerald-400"
+                : "border-transparent text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      {mainTab === "details" && (
-        <div className="model-detail-layout">
-          {/* Version Selector */}
-          <div className="card version-list-card">
-            <h3 className="card-title">Versions</h3>
-            {versions.length === 0 && <p className="subtle">No versions yet.</p>}
-            {versions.map((v) => (
-              <div
-                key={v.id}
-                className={`version-item${selectedVersion?.id === v.id ? " selected" : ""}`}
-                onClick={() => selectVersion(v)}
-              >
-                <div>
-                  <strong>v{v.version}</strong>
-                  <div className="subtle" style={{ fontSize: "0.78rem" }}>
-                    {v.created_at?.slice(0, 10)}
-                  </div>
-                </div>
-                <span className="badge" style={stagePillStyle(v.stage)}>{v.stage}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Version Detail Panel */}
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
-            {!selectedVersion && (
-              <div className="card">
-                <p className="subtle">Select a version to inspect.</p>
-              </div>
-            )}
-
-            {selectedVersion && versionDetail && (
-              <>
-                {/* Stage Promotion */}
-                <div className="card">
-                  <h3 className="card-title">Stage Promotion</h3>
-                  <div className="promote-row">
-                    <div>
-                      <span className="subtle">Current: </span>
-                      <span className="badge" style={stagePillStyle(selectedVersion.stage)}>{selectedVersion.stage}</span>
-                    </div>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      <select
-                        className="filter-select"
-                        value={promotingTo}
-                        onChange={(e) => setPromotingTo(e.target.value)}
-                      >
-                        {STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                      <button className="button" onClick={handlePromote} disabled={promoting || promotingTo === selectedVersion.stage}>
-                        {promoting ? (
-                          "Promoting…"
-                        ) : (
-                          <>
-                            Promote <IconArrowRight style={{ marginLeft: 4 }} />
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Metrics & Params */}
-                <div className="grid-two">
-                  <div className="card">
-                    <h3 className="card-title">Metrics</h3>
-                    {versionDetail.metrics_json ? (
-                      <pre className="sql-block">{JSON.stringify(JSON.parse(versionDetail.metrics_json), null, 2)}</pre>
-                    ) : <p className="subtle">No metrics.</p>}
-                  </div>
-                  <div className="card">
-                    <h3 className="card-title">Parameters</h3>
-                    {versionDetail.params_json ? (
-                      <pre className="sql-block">{JSON.stringify(JSON.parse(versionDetail.params_json), null, 2)}</pre>
-                    ) : <p className="subtle">No parameters.</p>}
-                  </div>
-                </div>
-
-                {/* Artifact URI */}
-                {versionDetail.artifact_uri && (
-                  <div className="card">
-                    <h3 className="card-title">Artifact</h3>
-                    <code className="code-tag">{versionDetail.artifact_uri}</code>
-                  </div>
-                )}
-
-                {/* Lineage */}
-                <div className="card">
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                    <h3 className="card-title" style={{ margin: 0 }}>Lineage</h3>
-                    <button className="button button-sm" onClick={() => setShowLineageModal(true)}>Edit</button>
-                  </div>
-                  {versionDetail.lineage.length === 0 ? (
-                    <p className="subtle">No lineage linked.</p>
-                  ) : (
-                    versionDetail.lineage.map((l) => (
-                      <div key={l.id} className="lineage-card" style={{ marginBottom: 8 }}>
-                        <div>
-                          {l.dataset_uri && <div><span className="subtle">Dataset: </span><code>{l.dataset_uri}</code></div>}
-                          {l.feature_ids_json && <div><span className="subtle">Features: </span><code>{l.feature_ids_json}</code></div>}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-
-                {/* Stage History */}
-                <div className="card">
-                  <h3 className="card-title">Stage History</h3>
-                  {versionDetail.stage_history.length === 0 ? (
-                    <p className="subtle">No stage changes recorded.</p>
-                  ) : (
-                    <table className="table">
-                      <thead><tr><th>From</th><th>To</th><th>Changed At</th></tr></thead>
-                      <tbody>
-                        {versionDetail.stage_history.map((h) => (
-                          <tr key={h.id}>
-                            <td><span className="badge" style={stagePillStyle(h.from_stage)}>{h.from_stage}</span></td>
-                            <td><span className="badge" style={stagePillStyle(h.to_stage)}>{h.to_stage}</span></td>
-                            <td className="subtle">{h.changed_at?.slice(0, 16).replace("T", " ")}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+      {/* Tab: Versions Table */}
+      {activeTab === "versions" && (
+        <Card className="p-0 overflow-hidden">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="border-b border-zinc-800 bg-zinc-950/50 text-zinc-400 font-mono text-[11px] uppercase">
+                <th className="py-3 px-4 font-semibold">Version</th>
+                <th className="py-3 px-4 font-semibold">Stage</th>
+                <th className="py-3 px-4 font-semibold">Performance Metrics</th>
+                <th className="py-3 px-4 font-semibold">Registered</th>
+                <th className="py-3 px-4 font-semibold text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-800/60">
+              {versions.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="py-8 text-center text-zinc-500">
+                    No versions created yet.
+                  </td>
+                </tr>
+              ) : (
+                versions.map((v) => (
+                  <tr key={v.id} className="hover:bg-zinc-800/30">
+                    <td className="py-3 px-4 font-bold text-zinc-200 font-mono">v{v.version}</td>
+                    <td className="py-3 px-4">
+                      <Badge variant={v.stage === "Production" ? "success" : v.stage === "Staging" ? "warning" : "default"}>
+                        {v.stage}
+                      </Badge>
+                    </td>
+                    <td className="py-3 px-4 font-mono text-zinc-300">
+                      {v.metrics_json ? (
+                        <span className="text-[11px] text-zinc-400">{v.metrics_json}</span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="py-3 px-4 font-mono text-zinc-400">
+                      {v.created_at ? v.created_at.slice(0, 10) : "N/A"}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      {canEdit && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedVersion(v);
+                            setShowPromoteModal(true);
+                          }}
+                        >
+                          Promote Stage
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </Card>
       )}
 
-      {mainTab === "monitoring" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {loadingDrift && <div className="loading-pulse">Calculating feature drift metrics…</div>}
-          {!loadingDrift && driftData && (
-            <>
-              {/* Drift Summary Panel */}
-              <div className="card" style={{ display: "flex", flexDirection: "row", gap: 24, flexWrap: "wrap", alignItems: "center" }}>
-                <div style={{ flex: 1, minWidth: 250 }}>
-                  <h3 className="card-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    Model Health Status:
-                    {driftData.metrics.some(m => m.drift_detected) ? (
-                      <span className="badge" style={{ background: "rgba(225,29,72,0.15)", color: "#e11d48", padding: "4px 12px" }}>Warning (Drift Detected)</span>
-                    ) : (
-                      <span className="badge" style={{ background: "rgba(90,219,195,0.18)", color: "#0d7a66", padding: "4px 12px" }}>Healthy</span>
-                    )}
-                  </h3>
-                  <p className="subtle">
-                    We track population distribution changes of model input features. Population Stability Index (PSI) values above 0.2 indicate significant feature drift.
-                  </p>
-                </div>
-                <div style={{ display: "flex", gap: 16 }}>
-                  <div style={{ padding: "12px 20px", background: "#1b1b1f", borderRadius: 8, textAlign: "center", border: "1px solid #333" }}>
-                    <div className="subtle" style={{ fontSize: "0.75rem" }}>Moderate Threshold</div>
-                    <strong style={{ color: "#d97706", fontSize: "1.2rem" }}>&gt; {driftData.thresholds.no_drift}</strong>
-                  </div>
-                  <div style={{ padding: "12px 20px", background: "#1b1b1f", borderRadius: 8, textAlign: "center", border: "1px solid #333" }}>
-                    <div className="subtle" style={{ fontSize: "0.75rem" }}>High/Action Threshold</div>
-                    <strong style={{ color: "#e11d48", fontSize: "1.2rem" }}>&gt; {driftData.thresholds.moderate_drift}</strong>
-                  </div>
-                </div>
-              </div>
-
-              {/* Drift Charts Grid */}
-              <div className="grid-two">
+      {/* Tab: Real PSI Drift Monitoring */}
+      {activeTab === "drift" && (
+        <div className="space-y-6">
+          <Card>
+            <CardHeader
+              title="Population Stability Index (PSI) Drift Analysis"
+              description="Evaluates distribution divergence between baseline training data and live inference features. PSI > 0.2 indicates significant drift."
+            />
+            {driftData && driftData.metrics && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                 {driftData.metrics.map((m) => (
-                  <div key={m.feature} className="card" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <h4 style={{ margin: 0, fontSize: "0.95rem" }}><code>{m.feature}</code></h4>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <span className="subtle" style={{ fontSize: "0.78rem" }}>PSI: <strong>{m.current_psi}</strong></span>
-                        {m.drift_detected ? (
-                          <span className="badge" style={{ background: "rgba(225,29,72,0.15)", color: "#e11d48", fontSize: "0.7rem" }}>DRIFTED</span>
-                        ) : (
-                          <span className="badge" style={{ background: "rgba(90,219,195,0.18)", color: "#0d7a66", fontSize: "0.7rem" }}>OK</span>
-                        )}
-                      </div>
+                  <div key={m.feature} className="p-4 bg-zinc-950/80 border border-zinc-800 rounded-xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-xs text-zinc-200 font-semibold">{m.feature}</span>
+                      <Badge variant={m.drift_detected ? "danger" : m.current_psi > 0.1 ? "warning" : "success"}>
+                        {m.drift_detected ? "Significant Drift" : m.current_psi > 0.1 ? "Moderate" : "Stable"}
+                      </Badge>
                     </div>
-                    
-                    <DriftChart
-                      history={m.history}
-                      thresholdNo={driftData.thresholds.no_drift}
-                      thresholdMod={driftData.thresholds.moderate_drift}
-                    />
+
+                    <div className="flex items-baseline justify-between pt-2">
+                      <span className="text-[11px] text-zinc-400 font-mono">Current PSI Score</span>
+                      <span className="text-xl font-bold font-mono text-zinc-100">{m.current_psi}</span>
+                    </div>
+
+                    {/* Visual Bar Indicator */}
+                    <div className="w-full bg-zinc-900 h-2 rounded-full overflow-hidden border border-zinc-800">
+                      <div
+                        className={`h-full transition-all rounded-full ${
+                          m.current_psi > 0.2 ? "bg-rose-500" : m.current_psi > 0.1 ? "bg-amber-500" : "bg-emerald-500"
+                        }`}
+                        style={{ width: `${Math.min(100, (m.current_psi / 0.3) * 100)}%` }}
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
-            </>
-          )}
+            )}
+          </Card>
         </div>
       )}
 
-      {showVersionModal && (
-        <Modal title="Add Model Version" onClose={() => setShowVersionModal(false)}>
-          <form onSubmit={handleCreateVersion} className="modal-form">
-            {submitError && <div className="error-alert">{submitError}</div>}
-            <div className="form-row">
-              <div className="form-group">
-                <label>Version * (e.g. 1.0)</label>
-                <input value={versionForm.version} onChange={(e) => setVersionForm({ ...versionForm, version: e.target.value })} required placeholder="1.0" />
-              </div>
-              <div className="form-group">
-                <label>Initial Stage</label>
-                <select value={versionForm.stage} onChange={(e) => setVersionForm({ ...versionForm, stage: e.target.value })}>
-                  {STAGES.map((s) => <option key={s}>{s}</option>)}
-                </select>
-              </div>
-            </div>
-            <div className="form-group">
-              <label>Metrics JSON (e.g. {`{"roc_auc": 0.92}`})</label>
-              <textarea rows={2} value={versionForm.metrics_json} onChange={(e) => setVersionForm({ ...versionForm, metrics_json: e.target.value })} placeholder='{"roc_auc": 0.92, "precision": 0.88}' className="code-textarea" />
-            </div>
-            <div className="form-group">
-              <label>Parameters JSON</label>
-              <textarea rows={2} value={versionForm.params_json} onChange={(e) => setVersionForm({ ...versionForm, params_json: e.target.value })} placeholder='{"max_depth": 6, "n_estimators": 200}' className="code-textarea" />
-            </div>
-            <div className="form-group">
-              <label>Artifact URI</label>
-              <input value={versionForm.artifact_uri} onChange={(e) => setVersionForm({ ...versionForm, artifact_uri: e.target.value })} placeholder="s3://bucket/models/v1/model.pkl" />
-            </div>
-            <div className="modal-actions">
-              <button type="button" className="button button-outline" onClick={() => setShowVersionModal(false)}>Cancel</button>
-              <button type="submit" className="button" disabled={submitting}>{submitting ? "Saving…" : "Add Version"}</button>
-            </div>
-          </form>
-        </Modal>
-      )}
+      {/* Modal: Promote Stage */}
+      <Modal isOpen={showPromoteModal} title="Promote Model Stage" onClose={() => setShowPromoteModal(false)}>
+        <form onSubmit={handlePromote} className="space-y-4 text-xs">
+          <div>
+            <label className="block font-medium text-zinc-300 mb-1">Target Stage</label>
+            <select
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+              value={promoteStage}
+              onChange={(e) => setPromoteStage(e.target.value)}
+            >
+              <option value="Production">Production</option>
+              <option value="Staging">Staging</option>
+              <option value="Archived">Archived</option>
+            </select>
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800">
+            <Button variant="secondary" onClick={() => setShowPromoteModal(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" loading={promoting}>
+              Confirm Promotion
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
-      {showLineageModal && (
-        <Modal title="Edit Version Lineage" onClose={() => setShowLineageModal(false)}>
-          <form onSubmit={handleSaveLineage} className="modal-form">
-            <div className="form-group">
-              <label>Feature IDs JSON (array of UUIDs)</label>
-              <input value={lineageForm.feature_ids_json} onChange={(e) => setLineageForm({ ...lineageForm, feature_ids_json: e.target.value })} placeholder='["uuid1","uuid2"]' />
+      {/* Modal: New Version */}
+      <Modal isOpen={showVersionModal} title="Register New Version" onClose={() => setShowVersionModal(false)}>
+        <form onSubmit={handleCreateVersion} className="space-y-4 text-xs">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block font-medium text-zinc-300 mb-1">Version String</label>
+              <input
+                type="text"
+                required
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+                placeholder="e.g. 1.1"
+                value={versionForm.version}
+                onChange={(e) => setVersionForm({ ...versionForm, version: e.target.value })}
+              />
             </div>
-            <div className="form-group">
-              <label>Dataset URI</label>
-              <input value={lineageForm.dataset_uri} onChange={(e) => setLineageForm({ ...lineageForm, dataset_uri: e.target.value })} placeholder="s3://bucket/dataset.csv" />
+            <div>
+              <label className="block font-medium text-zinc-300 mb-1">Initial Stage</label>
+              <select
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+                value={versionForm.stage}
+                onChange={(e) => setVersionForm({ ...versionForm, stage: e.target.value })}
+              >
+                <option value="Staging">Staging</option>
+                <option value="Production">Production</option>
+              </select>
             </div>
-            <div className="modal-actions">
-              <button type="button" className="button button-outline" onClick={() => setShowLineageModal(false)}>Cancel</button>
-              <button type="submit" className="button" disabled={submitting}>{submitting ? "Saving…" : "Save Lineage"}</button>
-            </div>
-          </form>
-        </Modal>
-      )}
-    </section>
+          </div>
+          <div>
+            <label className="block font-medium text-zinc-300 mb-1">Metrics (JSON)</label>
+            <input
+              type="text"
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-700"
+              value={versionForm.metrics_json}
+              onChange={(e) => setVersionForm({ ...versionForm, metrics_json: e.target.value })}
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800">
+            <Button variant="secondary" onClick={() => setShowVersionModal(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" loading={submittingVersion}>
+              Register Version
+            </Button>
+          </div>
+        </form>
+      </Modal>
+    </div>
   );
 }

@@ -1,3 +1,4 @@
+import React from "react";
 import { Route, Routes, Navigate } from "react-router-dom";
 import { getAuthToken } from "./api";
 
@@ -16,12 +17,13 @@ import NotFound from "./pages/NotFound.jsx";
 function ProtectedLayout() {
   const token = getAuthToken();
   if (!token) return <Navigate to="/login" replace />;
+
   return (
-    <div className="app-shell">
+    <div className="flex min-h-screen bg-zinc-950 text-zinc-100">
       <Sidebar />
-      <div className="app-main">
+      <div className="flex-1 flex flex-col min-w-0">
         <TopBar />
-        <div className="page">
+        <main className="flex-1 p-8 max-w-7xl w-full mx-auto">
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/features" element={<FeatureCatalog />} />
@@ -32,7 +34,7 @@ function ProtectedLayout() {
             <Route path="/admin" element={<Admin />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
-        </div>
+        </main>
       </div>
     </div>
   );

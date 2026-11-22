@@ -1,34 +1,11 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { fetchApi } from "../api";
-import { IconClose, IconArrowRight } from "../components/Icons";
-import { exportToCsv, exportToJson } from "../utils/export";
-
-function Modal({ title, onClose, children }) {
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2 className="modal-title">{title}</h2>
-          <button className="modal-close" onClick={onClose} aria-label="Close modal"><IconClose /></button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function envColor(env) {
-  if (env === "prod" || env === "production") return "rgba(225, 29, 72, 0.15)";
-  if (env === "staging") return "rgba(217, 119, 6, 0.15)";
-  return "rgba(2, 132, 199, 0.15)";
-}
-
-function envText(env) {
-  if (env === "prod" || env === "production") return { color: "#e11d48", text: "Production" };
-  if (env === "staging") return { color: "#d97706", text: "Staging" };
-  return { color: "#0284c7", text: "Development" };
-}
+import { fetchApi, getActiveUser } from "../api";
+import { Card } from "../components/ui/Card";
+import { Button } from "../components/ui/Button";
+import { Badge } from "../components/ui/Badge";
+import { Modal } from "../components/ui/Modal";
+import { Cpu, Plus, ArrowRight, Activity, Calendar } from "lucide-react";
 
 export default function ModelRegistry() {
   const [models, setModels] = useState([]);
@@ -36,163 +13,147 @@ export default function ModelRegistry() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ name: "", description: "", environment: "dev" });
   const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState(null);
-  const [filterEnv, setFilterEnv] = useState("all");
-  const [filterSearch, setFilterSearch] = useState("");
 
-  const load = async () => {
+  const user = getActiveUser();
+  const canCreate = user?.roles?.some((r) => ["admin", "ml_engineer", "data_scientist"].includes(r));
+
+  const loadModels = async () => {
     try {
+      setLoading(true);
       const data = await fetchApi("/models");
       setModels(data);
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error(err);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    loadModels();
+  }, []);
 
   const handleCreate = async (e) => {
     e.preventDefault();
     setSubmitting(true);
-    setSubmitError(null);
     try {
-      await fetchApi("/models", { method: "POST", body: JSON.stringify(form) });
+      await fetchApi("/models", {
+        method: "POST",
+        body: JSON.stringify(form),
+      });
       setShowModal(false);
       setForm({ name: "", description: "", environment: "dev" });
-      await load();
+      await loadModels();
     } catch (err) {
-      setSubmitError(err.message);
+      alert(err.message);
     } finally {
       setSubmitting(false);
     }
   };
 
-  const filtered = models.filter((m) => {
-    const envMatch = filterEnv === "all" || m.environment === filterEnv;
-    const qMatch = !filterSearch || m.name.toLowerCase().includes(filterSearch.toLowerCase());
-    return envMatch && qMatch;
-  });
-
-  const exportRegistry = (format) => {
-    const dataToExport = filtered.map(m => ({
-      id: m.id,
-      name: m.name,
-      environment: m.environment || "dev",
-      description: m.description || "—",
-      created_at: m.created_at,
-    }));
-    if (format === "csv") {
-      exportToCsv(
-        "model_registry.csv",
-        ["ID", "Name", "Environment", "Description", "Created At"],
-        dataToExport,
-        row => [row.id, row.name, row.environment, row.description, row.created_at]
-      );
-    } else {
-      exportToJson("model_registry.json", dataToExport);
-    }
-  };
-
   return (
-    <section>
-      <div className="page-header">
+    <div className="space-y-6 animate-in fade-in duration-300">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-zinc-800/80">
         <div>
-          <h1 className="page-title">Model Registry</h1>
-          <p className="subtle">Register, version, and promote your ML models.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-100">Model Registry</h1>
+          <p className="text-sm text-zinc-400 mt-1">
+            Track ML models, version performance metrics, lifecycle stages, and feature lineage.
+          </p>
         </div>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button className="button button-outline" onClick={() => exportRegistry("csv")} style={{ background: "transparent", border: "1px solid #444", color: "#e0e0e0" }}>Export CSV</button>
-          <button className="button button-outline" onClick={() => exportRegistry("json")} style={{ background: "transparent", border: "1px solid #444", color: "#e0e0e0" }}>Export JSON</button>
-          <button className="button" onClick={() => setShowModal(true)}>+ Register Model</button>
-        </div>
+        {canCreate && (
+          <Button variant="primary" onClick={() => setShowModal(true)}>
+            <Plus className="w-4 h-4" /> Register Model
+          </Button>
+        )}
       </div>
 
-      {loading && <div className="loading-pulse">Loading models…</div>}
+      {loading ? (
+        <div className="py-20 text-center text-sm text-zinc-500">Loading models from registry…</div>
+      ) : models.length === 0 ? (
+        <div className="py-20 text-center text-sm text-zinc-500">
+          No models registered yet. Click "Register Model" to add your first.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {models.map((m) => (
+            <Card key={m.id} hover className="flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="p-2 rounded-lg bg-indigo-950/60 border border-indigo-800/40 text-indigo-400">
+                    <Cpu className="w-5 h-5" />
+                  </div>
+                  <Badge variant={m.environment === "production" ? "success" : "default"}>
+                    {m.environment}
+                  </Badge>
+                </div>
+                <h3 className="text-base font-semibold text-zinc-100 tracking-tight">{m.name}</h3>
+                <p className="text-xs text-zinc-400 mt-1.5 line-clamp-2">
+                  {m.description || "No description specified."}
+                </p>
+              </div>
 
-      {!loading && (
-        <>
-          <div className="filter-bar" style={{ marginBottom: 16 }}>
+              <div className="mt-5 pt-4 border-t border-zinc-800/80 flex items-center justify-between text-xs text-zinc-500">
+                <span className="font-mono text-[11px]">
+                  {m.created_at ? m.created_at.slice(0, 10) : "N/A"}
+                </span>
+                <Link
+                  to={`/models/${m.id}`}
+                  className="inline-flex items-center gap-1 font-medium text-emerald-400 hover:text-emerald-300 transition"
+                >
+                  Manage <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Modal: Register Model */}
+      <Modal isOpen={showModal} title="Register New Model" onClose={() => setShowModal(false)}>
+        <form onSubmit={handleCreate} className="space-y-4 text-xs">
+          <div>
+            <label className="block font-medium text-zinc-300 mb-1">Model Name</label>
             <input
-              className="filter-input"
-              placeholder="Search models…"
-              value={filterSearch}
-              onChange={(e) => setFilterSearch(e.target.value)}
+              type="text"
+              required
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+              placeholder="e.g. Churn Risk Predictor"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
             />
-            <select className="filter-select" value={filterEnv} onChange={(e) => setFilterEnv(e.target.value)}>
-              <option value="all">All Environments</option>
-              <option value="dev">Development</option>
+          </div>
+          <div>
+            <label className="block font-medium text-zinc-300 mb-1">Description</label>
+            <input
+              type="text"
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+              placeholder="Model goal and prediction target"
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block font-medium text-zinc-300 mb-1">Environment</label>
+            <select
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+              value={form.environment}
+              onChange={(e) => setForm({ ...form, environment: e.target.value })}
+            >
+              <option value="dev">Development (dev)</option>
               <option value="staging">Staging</option>
-              <option value="prod">Production</option>
+              <option value="production">Production</option>
             </select>
-            <span className="subtle">{filtered.length} model{filtered.length !== 1 ? "s" : ""}</span>
           </div>
-
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Model Name</th>
-                  <th>Environment</th>
-                  <th>Description</th>
-                  <th>Created</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.length === 0 && (
-                  <tr><td colSpan={5} style={{ textAlign: "center", padding: 32, color: "#888" }}>No models found.</td></tr>
-                )}
-                {filtered.map((m) => {
-                  const envDetails = envText(m.environment || "dev");
-                  return (
-                    <tr key={m.id} className="table-row-hover">
-                      <td><strong>{m.name}</strong></td>
-                      <td>
-                        <span className="badge" style={{ background: envColor(m.environment || "dev"), color: envDetails.color }}>
-                          {envDetails.text}
-                        </span>
-                      </td>
-                      <td className="subtle">{m.description || "—"}</td>
-                      <td className="subtle">{m.created_at?.slice(0, 10)}</td>
-                      <td><Link to={`/models/${m.id}`} className="table-link" style={{ display: "inline-flex", alignItems: "center" }}>Versions <IconArrowRight style={{ marginLeft: 4 }} /></Link></td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800">
+            <Button variant="secondary" onClick={() => setShowModal(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" loading={submitting}>
+              Register
+            </Button>
           </div>
-        </>
-      )}
-
-      {showModal && (
-        <Modal title="Register Model" onClose={() => setShowModal(false)}>
-          <form onSubmit={handleCreate} className="modal-form">
-            {submitError && <div className="error-alert">{submitError}</div>}
-            <div className="form-group">
-              <label>Model Name *</label>
-              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required placeholder="e.g. Churn Predictor" />
-            </div>
-            <div className="form-group">
-              <label>Environment *</label>
-              <select value={form.environment} onChange={(e) => setForm({ ...form, environment: e.target.value })}>
-                <option value="dev">Development</option>
-                <option value="staging">Staging</option>
-                <option value="prod">Production</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Description</label>
-              <textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="What does this model do?" />
-            </div>
-            <div className="modal-actions">
-              <button type="button" className="button button-outline" onClick={() => setShowModal(false)}>Cancel</button>
-              <button type="submit" className="button" disabled={submitting}>{submitting ? "Registering…" : "Register Model"}</button>
-            </div>
-          </form>
-        </Modal>
-      )}
-    </section>
+        </form>
+      </Modal>
+    </div>
   );
 }

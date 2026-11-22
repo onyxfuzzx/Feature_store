@@ -1,106 +1,104 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { fetchApi } from "../api";
-import { IconClose, IconArrowRight } from "../components/Icons";
-import { exportToCsv, exportToJson } from "../utils/export";
-
-function statusBadgeStyle(s) {
-  if (s === "active") return { background: "rgba(90,219,195,0.18)", color: "#0d7a66" };
-  if (s === "draft") return { background: "rgba(255,176,103,0.2)", color: "#b06000" };
-  return { background: "rgba(200,200,200,0.2)", color: "#444" };
-}
-
-function envColor(env) {
-  if (env === "prod" || env === "production") return "rgba(225, 29, 72, 0.15)";
-  if (env === "staging") return "rgba(217, 119, 6, 0.15)";
-  return "rgba(2, 132, 199, 0.15)";
-}
-
-function envText(env) {
-  if (env === "prod" || env === "production") return { color: "#e11d48", text: "Production" };
-  if (env === "staging") return { color: "#d97706", text: "Staging" };
-  return { color: "#0284c7", text: "Development" };
-}
-
-function Modal({ title, onClose, children }) {
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2 className="modal-title">{title}</h2>
-          <button className="modal-close" onClick={onClose} aria-label="Close modal"><IconClose /></button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
+import { fetchApi, getActiveUser } from "../api";
+import { Button } from "../components/ui/Button";
+import { Badge } from "../components/ui/Badge";
+import { Card } from "../components/ui/Card";
+import { Modal } from "../components/ui/Modal";
+import {
+  Layers,
+  Plus,
+  Search,
+  Filter,
+  ArrowRight,
+  Database,
+  CheckCircle2,
+  AlertCircle,
+  FileCode,
+} from "lucide-react";
 
 export default function FeatureCatalog() {
-  const [groups, setGroups] = useState([]);
   const [features, setFeatures] = useState([]);
-  const [filterGroup, setFilterGroup] = useState("all");
-  const [filterStatus, setFilterStatus] = useState("all");
-  const [filterEnv, setFilterEnv] = useState("all");
-  const [filterSearch, setFilterSearch] = useState("");
+  const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const [showGroupModal, setShowGroupModal] = useState(false);
-  const [showFeatureModal, setShowFeatureModal] = useState(false);
-  const [groupForm, setGroupForm] = useState({ name: "", description: "", tags_json: "", environment: "dev" });
-  const [featureForm, setFeatureForm] = useState({
-    group_id: "", name: "", dtype: "float", description: "", source_sql: "", refresh_interval: "daily", status: "draft"
-  });
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState(null);
+  // Filters
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedGroup, setSelectedGroup] = useState("all");
+  const [selectedEnv, setSelectedEnv] = useState("all");
 
-  const load = async () => {
+  // Modals
+  const [showFeatureModal, setShowFeatureModal] = useState(false);
+  const [showGroupModal, setShowGroupModal] = useState(false);
+
+  // Forms
+  const [featureForm, setFeatureForm] = useState({
+    group_id: "",
+    name: "",
+    dtype: "float",
+    description: "",
+    source_sql: "SELECT customer_id AS entity_key, amount AS value, event_time FROM feature_store.sample_events",
+    refresh_interval: "hourly",
+    status: "active",
+    min_value: "",
+    max_value: "",
+    allow_null: true,
+  });
+
+  const [groupForm, setGroupForm] = useState({
+    name: "",
+    description: "",
+    environment: "dev",
+    tags: "core,ml",
+  });
+
+  const [submitting, setSubmitting] = useState(false);
+  const user = getActiveUser();
+  const canEdit = user?.roles?.some((r) => ["admin", "ml_engineer", "data_scientist"].includes(r));
+
+  const loadData = async () => {
     try {
-      const [g, f] = await Promise.all([
-        fetchApi("/features/groups"),
+      setLoading(true);
+      setError(null);
+      const [fData, gData] = await Promise.all([
         fetchApi("/features"),
+        fetchApi("/features/groups"),
       ]);
-      setGroups(g);
-      setFeatures(f);
-    } catch (e) {
-      setError(e.message);
+      setFeatures(fData);
+      setGroups(gData);
+      if (gData.length > 0 && !featureForm.group_id) {
+        setFeatureForm((prev) => ({ ...prev, group_id: gData[0].id }));
+      }
+    } catch (err) {
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { load(); }, []);
-
-  const filtered = features.filter((f) => {
-    const groupOfFeature = groups.find((g) => g.id === f.group_id);
-    const envMatch = filterEnv === "all" || (groupOfFeature && groupOfFeature.environment === filterEnv);
-    const gMatch = filterGroup === "all" || f.group_id === filterGroup;
-    const sMatch = filterStatus === "all" || f.status === filterStatus;
-    const qMatch = !filterSearch || f.name.toLowerCase().includes(filterSearch.toLowerCase());
-    return envMatch && gMatch && sMatch && qMatch;
-  });
-
-  const groupById = Object.fromEntries(groups.map((g) => [g.id, g.name]));
-  const groupEnvMap = Object.fromEntries(groups.map((g) => [g.id, g.environment]));
+  useEffect(() => {
+    loadData();
+  }, []);
 
   const handleCreateGroup = async (e) => {
     e.preventDefault();
     setSubmitting(true);
-    setSubmitError(null);
     try {
       await fetchApi("/features/groups", {
         method: "POST",
         body: JSON.stringify({
-          ...groupForm,
-          tags_json: groupForm.tags_json || null,
+          name: groupForm.name,
+          description: groupForm.description,
+          environment: groupForm.environment,
+          tags_json: JSON.stringify(groupForm.tags.split(",").map((t) => t.trim())),
         }),
       });
       setShowGroupModal(false);
-      setGroupForm({ name: "", description: "", tags_json: "", environment: "dev" });
-      await load();
+      setGroupForm({ name: "", description: "", environment: "dev", tags: "core,ml" });
+      await loadData();
     } catch (err) {
-      setSubmitError(err.message);
+      alert(err.message);
     } finally {
       setSubmitting(false);
     }
@@ -109,232 +107,333 @@ export default function FeatureCatalog() {
   const handleCreateFeature = async (e) => {
     e.preventDefault();
     setSubmitting(true);
-    setSubmitError(null);
     try {
+      const validationRules = {
+        allow_null: featureForm.allow_null,
+        min_value: featureForm.min_value ? parseFloat(featureForm.min_value) : null,
+        max_value: featureForm.max_value ? parseFloat(featureForm.max_value) : null,
+      };
+
       await fetchApi("/features", {
         method: "POST",
-        body: JSON.stringify(featureForm),
+        body: JSON.stringify({
+          group_id: featureForm.group_id,
+          name: featureForm.name,
+          dtype: featureForm.dtype,
+          description: featureForm.description,
+          source_sql: featureForm.source_sql,
+          refresh_interval: featureForm.refresh_interval,
+          status: featureForm.status,
+          validation_rules_json: JSON.stringify(validationRules),
+        }),
       });
       setShowFeatureModal(false);
-      setFeatureForm({ group_id: "", name: "", dtype: "float", description: "", source_sql: "", refresh_interval: "daily", status: "draft" });
-      await load();
+      setFeatureForm({
+        group_id: groups[0]?.id || "",
+        name: "",
+        dtype: "float",
+        description: "",
+        source_sql: "SELECT customer_id AS entity_key, amount AS value, event_time FROM feature_store.sample_events",
+        refresh_interval: "hourly",
+        status: "active",
+        min_value: "",
+        max_value: "",
+        allow_null: true,
+      });
+      await loadData();
     } catch (err) {
-      setSubmitError(err.message);
+      alert(err.message);
     } finally {
       setSubmitting(false);
     }
   };
 
-  const exportCatalog = (format) => {
-    const dataToExport = filtered.map(f => ({
-      id: f.id,
-      name: f.name,
-      group: groupById[f.group_id] || "—",
-      environment: groupEnvMap[f.group_id] || "dev",
-      dtype: f.dtype,
-      status: f.status,
-      refresh_interval: f.refresh_interval,
-      created_at: f.created_at,
-    }));
-    if (format === "csv") {
-      exportToCsv(
-        "feature_catalog.csv",
-        ["ID", "Name", "Group", "Environment", "Data Type", "Status", "Refresh Interval", "Created At"],
-        dataToExport,
-        row => [row.id, row.name, row.group, row.environment, row.dtype, row.status, row.refresh_interval, row.created_at]
-      );
-    } else {
-      exportToJson("feature_catalog.json", dataToExport);
-    }
-  };
+  const filteredFeatures = features.filter((f) => {
+    const matchesSearch =
+      f.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (f.description && f.description.toLowerCase().includes(searchQuery.toLowerCase()));
+    const matchesGroup = selectedGroup === "all" || f.group_id === selectedGroup;
+    return matchesSearch && matchesGroup;
+  });
 
   return (
-    <section>
-      <div className="page-header">
+    <div className="space-y-6 animate-in fade-in duration-300">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-zinc-800/80">
         <div>
-          <h1 className="page-title">Feature Catalog</h1>
-          <p className="subtle">Define, track, and govern ML features across your platform.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-100">Feature Catalog</h1>
+          <p className="text-sm text-zinc-400 mt-1">
+            Discover, define, validate, and serve feature transformations across teams.
+          </p>
         </div>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button className="button button-outline" onClick={() => exportCatalog("csv")} style={{ background: "transparent", border: "1px solid #444", color: "#e0e0e0" }}>Export CSV</button>
-          <button className="button button-outline" onClick={() => exportCatalog("json")} style={{ background: "transparent", border: "1px solid #444", color: "#e0e0e0" }}>Export JSON</button>
-          <button className="button button-outline" onClick={() => setShowGroupModal(true)}>+ Group</button>
-          <button className="button" onClick={() => setShowFeatureModal(true)}>+ Feature</button>
+        {canEdit && (
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={() => setShowGroupModal(true)}>
+              <Plus className="w-4 h-4" /> Feature Group
+            </Button>
+            <Button variant="primary" onClick={() => setShowFeatureModal(true)}>
+              <Plus className="w-4 h-4" /> Define Feature
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <div className="p-4 rounded-xl bg-rose-950/40 border border-rose-800/50 text-rose-300 text-sm flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {/* Filter & Search Bar */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="relative w-full sm:w-80">
+          <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-3 pointer-events-none" />
+          <input
+            type="text"
+            className="w-full bg-zinc-900 border border-zinc-800 text-xs text-zinc-100 pl-9 pr-3 py-2 rounded-lg placeholder:text-zinc-500 focus:outline-none focus:border-zinc-700"
+            placeholder="Filter features by name or description…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <select
+            className="bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 px-3 py-2 rounded-lg focus:outline-none focus:border-zinc-700"
+            value={selectedGroup}
+            onChange={(e) => setSelectedGroup(e.target.value)}
+          >
+            <option value="all">All Groups ({groups.length})</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
-      {loading && <div className="loading-pulse">Loading features…</div>}
-      {error && <div className="error-alert">{error}</div>}
-
-      {!loading && (
-        <>
-          <div className="filter-bar">
-            <input
-              className="filter-input"
-              placeholder="Search by name…"
-              value={filterSearch}
-              onChange={(e) => setFilterSearch(e.target.value)}
-            />
-            <select className="filter-select" value={filterGroup} onChange={(e) => setFilterGroup(e.target.value)}>
-              <option value="all">All Groups</option>
-              {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-            </select>
-            <select className="filter-select" value={filterEnv} onChange={(e) => setFilterEnv(e.target.value)}>
-              <option value="all">All Environments</option>
-              <option value="dev">Development</option>
-              <option value="staging">Staging</option>
-              <option value="prod">Production</option>
-            </select>
-            <select className="filter-select" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
-              <option value="all">All Statuses</option>
-              <option value="active">Active</option>
-              <option value="draft">Draft</option>
-              <option value="deprecated">Deprecated</option>
-            </select>
-            <span className="subtle">{filtered.length} result{filtered.length !== 1 ? "s" : ""}</span>
-          </div>
-
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
+      {/* Features Table */}
+      <Card className="p-0 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="border-b border-zinc-800 bg-zinc-950/50 text-zinc-400 font-mono text-[11px] uppercase">
+                <th className="py-3 px-4 font-semibold">Feature Name</th>
+                <th className="py-3 px-4 font-semibold">Group</th>
+                <th className="py-3 px-4 font-semibold">Type</th>
+                <th className="py-3 px-4 font-semibold">Refresh</th>
+                <th className="py-3 px-4 font-semibold">Status</th>
+                <th className="py-3 px-4 font-semibold text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-800/60">
+              {loading ? (
                 <tr>
-                  <th>Name</th>
-                  <th>Group</th>
-                  <th>Environment</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>Refresh</th>
-                  <th>Created</th>
-                  <th></th>
+                  <td colSpan={6} className="py-12 text-center text-zinc-500">
+                    Loading feature catalog…
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {filtered.length === 0 && (
-                  <tr><td colSpan={8} style={{ textAlign: "center", padding: "32px", color: "#888" }}>No features found.</td></tr>
-                )}
-                {filtered.map((f) => {
-                  const env = groupEnvMap[f.group_id] || "dev";
-                  const envDetails = envText(env);
+              ) : filteredFeatures.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center text-zinc-500">
+                    No features found matching criteria.
+                  </td>
+                </tr>
+              ) : (
+                filteredFeatures.map((f) => {
+                  const grp = groups.find((g) => g.id === f.group_id);
                   return (
-                    <tr key={f.id} className="table-row-hover">
-                      <td><strong>{f.name}</strong></td>
-                      <td>{groupById[f.group_id] || "—"}</td>
-                      <td>
-                        <span className="badge" style={{ background: envColor(env), color: envDetails.color }}>
-                          {envDetails.text}
-                        </span>
+                    <tr key={f.id} className="hover:bg-zinc-800/30 transition-colors">
+                      <td className="py-3 px-4 font-medium text-zinc-200">
+                        <Link to={`/features/${f.id}`} className="hover:text-emerald-400 transition flex items-center gap-2">
+                          <Layers className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>{f.name}</span>
+                        </Link>
                       </td>
-                      <td><code className="code-tag">{f.dtype}</code></td>
-                      <td><span className="badge" style={statusBadgeStyle(f.status)}>{f.status}</span></td>
-                      <td>{f.refresh_interval}</td>
-                      <td>{f.created_at?.slice(0, 10)}</td>
-                      <td><Link to={`/features/${f.id}`} className="table-link" style={{ display: "inline-flex", alignItems: "center" }}>View <IconArrowRight style={{ marginLeft: 4 }} /></Link></td>
+                      <td className="py-3 px-4 text-zinc-400">{grp?.name || "—"}</td>
+                      <td className="py-3 px-4 font-mono text-zinc-400">
+                        <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 text-[10px]">{f.dtype}</span>
+                      </td>
+                      <td className="py-3 px-4 font-mono text-zinc-400">{f.refresh_interval}</td>
+                      <td className="py-3 px-4">
+                        <Badge variant={f.status === "active" ? "success" : "default"}>{f.status}</Badge>
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <Link
+                          to={`/features/${f.id}`}
+                          className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-emerald-400 transition"
+                        >
+                          View <ArrowRight className="w-3.5 h-3.5" />
+                        </Link>
+                      </td>
                     </tr>
                   );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
-      {showGroupModal && (
-        <Modal title="Create Feature Group" onClose={() => setShowGroupModal(false)}>
-          <form onSubmit={handleCreateGroup} className="modal-form">
-            {submitError && <div className="error-alert">{submitError}</div>}
-            <div className="form-group">
-              <label>Group Name *</label>
-              <input value={groupForm.name} onChange={(e) => setGroupForm({ ...groupForm, name: e.target.value })} required placeholder="e.g. Payments" />
-            </div>
-            <div className="form-group">
-              <label>Environment *</label>
-              <select value={groupForm.environment} onChange={(e) => setGroupForm({ ...groupForm, environment: e.target.value })}>
-                <option value="dev">Development</option>
-                <option value="staging">Staging</option>
-                <option value="prod">Production</option>
+      {/* Modal: New Feature Group */}
+      <Modal isOpen={showGroupModal} title="Create Feature Group" onClose={() => setShowGroupModal(false)}>
+        <form onSubmit={handleCreateGroup} className="space-y-4 text-xs">
+          <div>
+            <label className="block font-medium text-zinc-300 mb-1">Group Name</label>
+            <input
+              type="text"
+              required
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+              placeholder="e.g. Payments"
+              value={groupForm.name}
+              onChange={(e) => setGroupForm({ ...groupForm, name: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block font-medium text-zinc-300 mb-1">Description</label>
+            <input
+              type="text"
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+              placeholder="Feature group purpose"
+              value={groupForm.description}
+              onChange={(e) => setGroupForm({ ...groupForm, description: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block font-medium text-zinc-300 mb-1">Environment</label>
+            <select
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+              value={groupForm.environment}
+              onChange={(e) => setGroupForm({ ...groupForm, environment: e.target.value })}
+            >
+              <option value="dev">Development (dev)</option>
+              <option value="staging">Staging</option>
+              <option value="production">Production</option>
+            </select>
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800">
+            <Button variant="secondary" onClick={() => setShowGroupModal(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" loading={submitting}>
+              Create Group
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal: Define Feature */}
+      <Modal isOpen={showFeatureModal} title="Define New Feature" maxWidth="max-w-xl" onClose={() => setShowFeatureModal(false)}>
+        <form onSubmit={handleCreateFeature} className="space-y-4 text-xs">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block font-medium text-zinc-300 mb-1">Feature Group</label>
+              <select
+                required
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+                value={featureForm.group_id}
+                onChange={(e) => setFeatureForm({ ...featureForm, group_id: e.target.value })}
+              >
+                {groups.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name} ({g.environment})
+                  </option>
+                ))}
               </select>
             </div>
-            <div className="form-group">
-              <label>Description</label>
-              <textarea value={groupForm.description} onChange={(e) => setGroupForm({ ...groupForm, description: e.target.value })} placeholder="What features belong to this group?" rows={3} />
-            </div>
-            <div className="form-group">
-              <label>Tags (JSON array, e.g. ["payments","core"])</label>
-              <input value={groupForm.tags_json} onChange={(e) => setGroupForm({ ...groupForm, tags_json: e.target.value })} placeholder='["tag1","tag2"]' />
-            </div>
-            <div className="modal-actions">
-              <button type="button" className="button button-outline" onClick={() => setShowGroupModal(false)}>Cancel</button>
-              <button type="submit" className="button" disabled={submitting}>{submitting ? "Creating…" : "Create Group"}</button>
-            </div>
-          </form>
-        </Modal>
-      )}
-
-      {showFeatureModal && (
-        <Modal title="Define New Feature" onClose={() => setShowFeatureModal(false)}>
-          <form onSubmit={handleCreateFeature} className="modal-form">
-            {submitError && <div className="error-alert">{submitError}</div>}
-            <div className="form-row">
-              <div className="form-group">
-                <label>Feature Name *</label>
-                <input value={featureForm.name} onChange={(e) => setFeatureForm({ ...featureForm, name: e.target.value })} required placeholder="e.g. customer_30d_spend" />
-              </div>
-              <div className="form-group">
-                <label>Group *</label>
-                <select value={featureForm.group_id} onChange={(e) => setFeatureForm({ ...featureForm, group_id: e.target.value })} required>
-                  <option value="">Select group</option>
-                  {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-                </select>
-              </div>
-            </div>
-            <div className="form-row">
-              <div className="form-group">
-                <label>Data Type *</label>
-                <select value={featureForm.dtype} onChange={(e) => setFeatureForm({ ...featureForm, dtype: e.target.value })}>
-                  <option value="float">float</option>
-                  <option value="int">int</option>
-                  <option value="string">string</option>
-                  <option value="bool">bool</option>
-                </select>
-              </div>
-              <div className="form-group">
-                <label>Refresh Interval *</label>
-                <select value={featureForm.refresh_interval} onChange={(e) => setFeatureForm({ ...featureForm, refresh_interval: e.target.value })}>
-                  <option value="hourly">Hourly</option>
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                </select>
-              </div>
-            </div>
-            <div className="form-group">
-              <label>Description</label>
-              <input value={featureForm.description} onChange={(e) => setFeatureForm({ ...featureForm, description: e.target.value })} placeholder="What does this feature measure?" />
-            </div>
-            <div className="form-group">
-              <label>Source SQL * (must return: entity_key, value, event_time)</label>
-              <textarea
-                value={featureForm.source_sql}
-                onChange={(e) => setFeatureForm({ ...featureForm, source_sql: e.target.value })}
+            <div>
+              <label className="block font-medium text-zinc-300 mb-1">Feature Name</label>
+              <input
+                type="text"
                 required
-                rows={4}
-                placeholder="SELECT customer_id AS entity_key, SUM(amount) AS value, MAX(event_time) AS event_time FROM feature_store.sample_events GROUP BY customer_id"
-                className="code-textarea"
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+                placeholder="e.g. customer_30d_spend"
+                value={featureForm.name}
+                onChange={(e) => setFeatureForm({ ...featureForm, name: e.target.value })}
               />
             </div>
-            <div className="form-group">
-              <label>Status</label>
-              <select value={featureForm.status} onChange={(e) => setFeatureForm({ ...featureForm, status: e.target.value })}>
-                <option value="draft">Draft</option>
-                <option value="active">Active</option>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block font-medium text-zinc-300 mb-1">Data Type</label>
+              <select
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+                value={featureForm.dtype}
+                onChange={(e) => setFeatureForm({ ...featureForm, dtype: e.target.value })}
+              >
+                <option value="float">Float</option>
+                <option value="int">Integer</option>
+                <option value="string">String</option>
+                <option value="boolean">Boolean</option>
               </select>
             </div>
-            <div className="modal-actions">
-              <button type="button" className="button button-outline" onClick={() => setShowFeatureModal(false)}>Cancel</button>
-              <button type="submit" className="button" disabled={submitting}>{submitting ? "Creating…" : "Create Feature"}</button>
+            <div>
+              <label className="block font-medium text-zinc-300 mb-1">Refresh Cadence</label>
+              <select
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
+                value={featureForm.refresh_interval}
+                onChange={(e) => setFeatureForm({ ...featureForm, refresh_interval: e.target.value })}
+              >
+                <option value="hourly">Hourly</option>
+                <option value="daily">Daily</option>
+                <option value="streaming">Streaming / Realtime</option>
+              </select>
             </div>
-          </form>
-        </Modal>
-      )}
-    </section>
+          </div>
+
+          <div>
+            <label className="block font-medium text-zinc-300 mb-1">SQL Transformation</label>
+            <textarea
+              required
+              rows={3}
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 font-mono text-[11px] focus:outline-none focus:border-zinc-700"
+              value={featureForm.source_sql}
+              onChange={(e) => setFeatureForm({ ...featureForm, source_sql: e.target.value })}
+            />
+            <p className="text-[10px] text-zinc-500 mt-1">Must alias entity_key and value.</p>
+          </div>
+
+          {/* Validation Rules Section */}
+          <div className="p-3 bg-zinc-950/60 border border-zinc-800/80 rounded-lg space-y-2">
+            <span className="text-[11px] font-semibold text-zinc-300 font-mono uppercase">Validation Rules</span>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[10px] text-zinc-400 mb-1">Min Value</label>
+                <input
+                  type="number"
+                  step="any"
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded p-1.5 text-zinc-100 text-xs"
+                  placeholder="e.g. 0"
+                  value={featureForm.min_value}
+                  onChange={(e) => setFeatureForm({ ...featureForm, min_value: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] text-zinc-400 mb-1">Max Value</label>
+                <input
+                  type="number"
+                  step="any"
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded p-1.5 text-zinc-100 text-xs"
+                  placeholder="e.g. 100000"
+                  value={featureForm.max_value}
+                  onChange={(e) => setFeatureForm({ ...featureForm, max_value: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800">
+            <Button variant="secondary" onClick={() => setShowFeatureModal(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" loading={submitting}>
+              Save Feature
+            </Button>
+          </div>
+        </form>
+      </Modal>
+    </div>
   );
 }
