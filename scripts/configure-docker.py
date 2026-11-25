@@ -1,6 +1,7 @@
 """Generate local Docker secrets without overwriting an existing configuration."""
-from pathlib import Path
+
 import secrets
+from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 destination = root / ".env.docker"

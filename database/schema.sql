@@ -219,3 +219,6 @@ CREATE TABLE IF NOT EXISTS model_registry.drift_run (
     status VARCHAR(40) NOT NULL, result_json JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS ix_drift_run_model_version_id ON model_registry.drift_run(model_version_id);
+
+CREATE INDEX IF NOT EXISTS ix_offline_asof_cover ON feature_store.feature_values_offline (entity_key, feature_id, event_time DESC) INCLUDE (value);
+CREATE INDEX IF NOT EXISTS ix_job_run_recent ON jobs.job_run (job_definition_id, started_at DESC NULLS LAST, id DESC);

@@ -1,154 +1,53 @@
-# Enterprise Feature Store & Model Registry: End-to-End Architectural Blueprint (A to Z)
+# Training-to-serving system flow
 
-> Implementation status: P0/P1 corrections are implemented and verified; see [P0 operation guide](P0_IMPLEMENTATION.md). P2 performance and release work remains. Executable serving currently supports registered JSON linear/logistic models.
-
----
-
-## 1. Executive Summary
-
-A modern, enterprise-grade Feature Store and Model Registry acts as the foundational data and governance platform for operational machine learning. It bridges the critical divide between **data engineering** (batch and streaming transformations) and **real-time ML serving** (ultra-low latency online feature hydration, inference scoring, and drift detection).
-
-This document serves as the exhaustive architectural blueprint and reference specification for running and extending the platform end-to-end.
+This document describes implemented behavior. Runtime and capacity boundaries are in [README](../README.md) and [performance](PERFORMANCE.md).
 
 ```mermaid
-flowchart TD
-    subgraph DataSources["1. Raw Data Sources"]
-        Stream["Real-Time Event Streams<br/>(Kafka / Kinesis / Webhooks)"]
-        Batch["Batch Warehouses / Data Lakes<br/>(PostgreSQL / Snowflake / S3)"]
-    end
-
-    subgraph FeatureStoreCore["2. Feature Store Engine"]
-        Ingest["Streaming Ingestion Proxy<br/>POST /features/stream-ingest"]
-        Scheduler["Materialization Engine<br/>(APScheduler + Quality Validator)"]
-        
-        subgraph StorageTier["Dual-Storage Tier"]
-            Online["Online Store (Sub-10ms)<br/>Redis Key-Value / PG Memory"]
-            Offline["Offline Store (Historical)<br/>PostgreSQL / Parquet Lake"]
-        end
-        
-        AsOf["Point-in-Time Engine<br/>POST /features/offline/as-of-join"]
-        DryRun["SQL Query Sandbox<br/>POST /features/dry-run"]
-    end
-
-    subgraph ModelRegistry["3. Model Registry & Governance"]
-        Registry["Model Version Registry"]
-        Artifacts["Artifact Storage Engine<br/>(.pkl, .onnx, .bin)"]
-        Stages["Stage Lifecycle Manager<br/>(Staging / Production / Archived)"]
-        Lineage["Lineage DAG Engine<br/>GET /{id}/lineage-graph"]
-    end
-
-    subgraph Serving["4. Real-Time Serving & Inference"]
-        Hydrate["Online Feature Hydration<br/>POST /models/{id}/hydrate"]
-        Predict["Inference Proxy Endpoint<br/>POST /models/{id}/predict"]
-        Drift["Drift & Stability Monitor<br/>(Population Stability Index)"]
-    end
-
-    Stream --> Ingest
-    Batch --> Scheduler
-    Ingest --> Online
-    Ingest -.-> Offline
-    Scheduler --> Online
-    Scheduler --> Offline
-    Offline --> AsOf
-    AsOf --> Registry
-    Online --> Hydrate
+flowchart LR
+    Console[React console and Python SDK] --> API[FastAPI and authorization]
+    API --> Source[Restricted PostgreSQL SELECT reader]
+    Source --> Refresh[Validated chunked atomic refresh]
+    API --> Push[HTTP event ingestion]
+    Refresh --> PostgreSQL[Online values and indexed historical values]
+    Push --> PostgreSQL
+    PostgreSQL --> Cache[Revision keyed Redis cache]
+    PostgreSQL --> Join[Point in time training join]
+    Join --> Training[External model training]
+    Training --> Registry[Version and managed JSON artifact]
+    Cache --> Hydrate[Signature based hydration]
+    PostgreSQL --> Hydrate
+    Registry --> Predict[Linear or logistic runtime]
     Hydrate --> Predict
-    Predict --> Drift
-    StorageTier --> Lineage
-    Registry --> Lineage
+    Predict --> Observations[Persisted inference observations]
+    Observations --> PSI[Explicit PSI against fixed training baseline]
 ```
 
----
+## Define and ingest
 
-## 2. The 10 Architectural Pillars of the Complete System
+Create a scoped feature group, then a feature definition with SQL returning `entity_key`, `value`, and preferably `event_time`. Declared types and numeric/null rules are enforced. Preview uses a separate unprivileged database login, read-only transactions, timeouts and at most 50 rows. Operators grant only approved source objects.
 
-### Pillar 1: Feature Definition & Interactive SQL Sandbox
-- **Core Problem**: Writing SQL transformations for feature derivation often results in broken materialization jobs due to unvalidated syntax or missing entity keys.
-- **Implementation**:
-  - `POST /features/dry-run`: Runs exploratory SQL with strict limits (`LIMIT 10`) within an isolated transaction.
-  - Guardrails: Restricts DDL/DML operations (`DROP`, `DELETE`, `UPDATE`, `ALTER`, `TRUNCATE`) while inferring column schemas and measuring query execution latency in real-time.
-  - Interactive UI Sandbox in `FeatureCatalog.jsx`: Allows engineers to verify query output columns before committing feature definitions.
+Materialization opens a server-side cursor and validates/writes chunks, keeping the value changes in one transaction. It advances the feature revision once and replaces that feature's online snapshot. Offline history remains append-only for new event timestamps. Any invalid row, source failure or conflicting replay rolls back the refresh, including earlier chunks; the failure record is persisted separately. The default source limit is 100,000 rows and chunk size 1,000.
 
-### Pillar 2: Dual Storage Tier (Online vs. Offline)
-- **Online Store (Low Latency Serving)**:
-  - Backends: **PostgreSQL** (`feature_store.feature_values_online`) and **Redis** (`RedisOnlineStore`).
-  - Architecture: Keys are indexed by `fs:{feature_id}:{entity_key}` with TTL support and pipelined `MGET` batch retrieval achieving sub-10ms latency.
-  - Graceful Fallback: The system automatically falls back to PostgreSQL if the in-memory cache is temporarily unreachable.
-- **Offline Store (Historical Time Series)**:
-  - Stores all historical feature value transitions with timestamps (`feature_store.feature_values_offline`).
-  - Supports analytical queries, training set generation, and historical data exploration.
+Streaming uses `POST /features/stream-ingest`, optionally persisting offline history. Same entity/feature/time with the same value is a no-op; a different value rejects the batch. A late event can enter history while leaving newer online values intact. A refresh intentionally replaces the current snapshot rather than merging deleted entities back in.
 
-### Pillar 3: Leakage-Free Point-in-Time Correct (As-Of) Join Engine
-- **Core Problem**: Machine learning models trained on features containing data from *after* the observation timestamp suffer from target leakage, causing models to perform well in training but fail disastrously in production.
-- **Implementation**:
-  - `POST /features/offline/as-of-join`: Computes exact point-in-time joins:
-    $$\max(\text{event\_time}) \quad \text{where} \quad \text{event\_time} \le \text{observation\_time}$$
-  - Takes an observation frame (entity keys and event timestamps) and joins historical feature states without lookahead bias.
+## Reconstruct and train
 
-### Pillar 4: Active Data Quality & Schema Validation
-- **Runtime Rules Enforcement**:
-  - `FeatureDefinition.validation_rules_json`: Supports assertions such as `min_value`, `max_value`, `allow_null: false`, and type checking.
-  - During materialization runs (`app/services/materialization.py`), rows violating constraints are logged, and error states are recorded in `feature_store.feature_materialization`.
+Call `POST /features/offline/as-of-join` with observations and feature references. A single PostgreSQL lateral-lookup statement selects each latest value at or before the observation timestamp, preserving observation order, duplicates and missing values. A covering index serves entity/feature/time lookups. This prevents selecting future event timestamps; it does not implement bitemporal ingestion-time reconstruction.
 
-### Pillar 5: Model Registry & Artifact Storage Engine
-- **Version Control**:
-  - Semantic versioning of models (`v1.0`, `v1.1`, `v2.0`).
-  - Stage transitions (`Staging`, `Production`, `Archived`) with strict audit trails (`model_registry.model_stage_history`).
-- **Binary Artifact Management**:
-  - `POST /models/{id}/versions/{v}/artifact`: Multi-part binary upload supporting `.pkl`, `.onnx`, `.bin`, `.tar.gz`.
-  - `GET /models/{id}/versions/{v}/artifact`: Streaming binary download for model deployment.
+Resolve features by UUID, unique name, `group:name`, or `environment/group:name`. Ambiguous names fail explicitly. Historical and online frames have bounded request sizes. Use the examples to train outside the service, register a model/version, link feature IDs and upload a `featureops.linear.v1` artifact with learned weights and an ordered typed signature.
 
-### Pillar 6: Real-Time Feature Hydration & Inference Proxy
-- **Online Feature Hydration (`POST /models/{id}/hydrate`)**:
-  - Maps model features to active online store values for requested entities.
-  - Produces pre-aligned, normalized feature vectors ready for model consumption.
-- **Inference Proxy (`POST /models/{id}/predict`)**:
-  - Takes an entity key and optional runtime features (e.g. `request_channel`, `device_type`), automatically hydrates all online features from cache, executes model scoring, and returns prediction classes with probabilities.
+## Serve and measure
 
-### Pillar 7: End-to-End Lineage & Visual DAG
-- **Full Traceability**:
-  - Maps `Source Tables` ➔ `Feature Definitions` ➔ `Feature Groups` ➔ `Model Versions` ➔ `Production Endpoints`.
-  - APIs: `GET /features/{id}/lineage-graph` and `GET /models/{id}/lineage-graph`.
-  - Interactive UI: Visual DAG component (`LineageGraph.jsx`) with node color-coding, status indicators, and connector paths.
+Hydration resolves the selected version's signature. Runtime-only values must be declared and cannot replace stored feature inputs. Prediction executes JSON linear regression or binary logistic scoring. Missing inputs/artifacts, unsupported formats and invalid values fail explicitly. Only successful predictions create inference observations.
 
-### Pillar 8: Statistical Drift & Distribution Monitoring (PSI)
-- **Population Stability Index (PSI)**:
-  - Continuously monitors online inference feature distributions against baseline training distributions:
-    $$\text{PSI} = \sum_{b=1}^{B} \left( \text{Actual}_b - \text{Expected}_b \right) \times \ln\left( \frac{\text{Actual}_b}{\text{Expected}_b} \right)$$
-  - Thresholds:
-    - $\text{PSI} < 0.1$: No significant change / Stable.
-    - $0.1 \le \text{PSI} < 0.2$: Moderate drift / Warning.
-    - $\text{PSI} \ge 0.2$: Critical distribution drift / Retrain required.
+PostgreSQL is authoritative. Cache keys include the committed feature revision; streaming publication occurs after commit and misses fall back to PostgreSQL and refill that generation. Refreshes warm on read to avoid retaining all rows in a publication queue. Old generations expire by TTL.
 
-### Pillar 9: Python SDK & CLI Automation
-- Standalone Python package (`sdk/featurestore/`):
-  - `FeatureStoreClient`: Full programmatic control for Data Scientists in Jupyter / Colab.
-  - Subcommands: `login`, `features`, `models`, `get-online`, `stream-ingest`, `predict`.
+Capture an immutable numeric training baseline for a version, then explicitly measure PSI over an inference-observation UTC window. Histories contain actual stored runs. Insufficient or missing observations remain unknown, while identical distributions can produce zero. There is no automatic retraining or drift scheduler.
 
-### Pillar 10: Enterprise Production Readiness
-- **Security & Multi-Tenancy**:
-  - RBAC: `Admin`, `ML Engineer`, `Data Scientist`, `Analyst`.
-  - API Keys with SHA-256 hashing and instant copy.
-  - Full audit logging (`core.audit_log`).
-- **CI/CD & Self-Hosting**:
-  - GitHub Actions automated matrix testing (`.github/workflows/ci.yml`).
-  - Production `docker-compose.yml` with healthchecks.
+## Govern and recover
 
----
+Version identities are unique per model and at most one version is Production. Promotions serialize and record stage/audit changes atomically. User creation commits roles and audit together. API keys inherit their owner's role and can be revoked.
 
-## 3. End-to-End Workflow Checklist (A to Z)
+Cron definitions validate at creation/edit. Workers refresh schedules, use advisory locks, and reserve durable UTC scheduled-minute slots. Manual triggers remain possible while a schedule is paused. Interrupted slots require an operator-selected retry; no exactly-once external side effects are promised.
 
-| Step | Action | Endpoint / Command | Tool / Layer |
-|---|---|---|---|
-| **1. Auth** | Generate API Key or login via JWT | `POST /auth/login` | Backend Auth / UI |
-| **2. Explore** | Test SQL queries in read-only sandbox | `POST /features/dry-run` | SQL Engine / UI Modal |
-| **3. Define** | Register Feature Groups and Definitions | `POST /features` | Feature Store |
-| **4. Ingest** | Stream real-time events into online tier | `POST /features/stream-ingest` | SDK / Ingestion API |
-| **5. Materialize** | Trigger scheduled batch aggregations | `POST /features/{id}/materialize` | APScheduler |
-| **6. Dataset** | Generate point-in-time training data | `POST /features/offline/as-of-join` | As-Of Join Engine |
-| **7. Train** | Train ML model on historical features | `scikit-learn` / `xgboost` | Training Script / Notebook |
-| **8. Register** | Register model version & upload weights | `POST /models/{id}/versions/{v}/artifact` | Model Registry |
-| **9. Promote** | Promote model version to Production | `PATCH /models/{id}/versions/{v}/stage` | Governance UI / API |
-| **10. Hydrate** | Look up low-latency features in real-time | `POST /models/{id}/hydrate` | Online Store (Redis/PG) |
-| **11. Score** | Execute real-time prediction via proxy | `POST /models/{id}/predict` | Inference Proxy |
-| **12. Monitor** | Track drift and view Lineage DAG | `GET /models/{id}/drift`, `lineage-graph` | Observability UI |
+Lineage derives from registered source records, feature links and consumer versions. Unknown sources are labelled explicitly. Use [operations](OPERATIONS.md) for health checks, database/artifact backup and restore, and [performance](PERFORMANCE.md) for capacity and retention planning.

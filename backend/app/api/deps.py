@@ -1,14 +1,13 @@
 import hashlib
 import uuid
 
-from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
-from sqlalchemy.orm import Session
-
+import jwt
 from app.core.config import settings
 from app.db.models.core import APIKey, Role, User, UserRole
 from app.db.session import get_db
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.orm import Session
 
 security = HTTPBearer(auto_error=False)
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -31,13 +30,17 @@ def get_current_user(
                 user = db.get(User, user_id)
                 if user and user.is_active:
                     return user
-        except (JWTError, ValueError):
+        except (jwt.PyJWTError, ValueError):
             pass
 
     # 2. Try API Key
     if api_key:
         hashed_key = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
-        db_key = db.query(APIKey).filter(APIKey.key_hash == hashed_key, APIKey.is_active == True).first()
+        db_key = (
+            db.query(APIKey)
+            .filter(APIKey.key_hash == hashed_key, APIKey.is_active.is_(True))
+            .first()
+        )
         if db_key:
             user = db.get(User, db_key.user_id)
             if user and user.is_active:

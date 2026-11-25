@@ -1,20 +1,31 @@
 import argparse
 import json
+import os
 import sys
+from getpass import getpass
+
 from featurestore.client import FeatureStoreClient, FeatureStoreError
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="featurestore", description="Feature Store & Model Registry CLI")
+    parser = argparse.ArgumentParser(
+        prog="featurestore", description="Feature Store & Model Registry CLI"
+    )
     parser.add_argument("--url", default="http://localhost:8000", help="Feature Store API base URL")
-    parser.add_argument("--api-key", default=None, help="API Key for authentication")
-    
+    parser.add_argument("--api-key", default=None, help="API key (prefer FEATURE_STORE_API_KEY)")
+    parser.add_argument("--token", default=None, help="JWT (prefer FEATURE_STORE_TOKEN)")
+
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Command: login
     login_parser = subparsers.add_parser("login", help="Log in and retrieve JWT token")
     login_parser.add_argument("--email", required=True, help="User email")
-    login_parser.add_argument("--password", required=True, help="User password")
+    login_parser.add_argument(
+        "--password", help="Password (prefer FEATURE_STORE_PASSWORD or hidden prompt)"
+    )
+    login_parser.add_argument(
+        "--show-token", action="store_true", help="Print only the token for explicit capture"
+    )
 
     # Command: features
     subparsers.add_parser("features", help="List registered feature definitions")
@@ -23,7 +34,9 @@ def main():
     subparsers.add_parser("models", help="List registered models in registry")
 
     # Command: get-online
-    online_parser = subparsers.add_parser("get-online", help="Fetch real-time features for entity keys")
+    online_parser = subparsers.add_parser(
+        "get-online", help="Fetch real-time features for entity keys"
+    )
     online_parser.add_argument("--keys", required=True, nargs="+", help="Entity keys")
     online_parser.add_argument("--features", required=True, nargs="+", help="Feature names")
 
@@ -32,13 +45,20 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    client = FeatureStoreClient(api_url=args.url, api_key=args.api_key)
+    client = FeatureStoreClient(api_url=args.url, api_key=args.api_key, token=args.token)
 
     try:
         if args.command == "login":
-            res = client.login(args.email, args.password)
-            print(f"Logged in successfully as {res['user']['name']}.")
-            print(f"Token: {res['access_token']}")
+            res = client.login(
+                args.email,
+                args.password or os.environ.get("FEATURE_STORE_PASSWORD") or getpass("Password: "),
+            )
+            if args.show_token:
+                print(res["access_token"])
+            else:
+                print(
+                    f"Logged in as {res['user']['name']}. Use login --show-token to capture a token; no credentials were saved."
+                )
         elif args.command == "features":
             feats = client.list_features()
             print(f"Found {len(feats)} features:")
@@ -55,6 +75,8 @@ def main():
     except FeatureStoreError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+    finally:
+        client.close()
 
 
 if __name__ == "__main__":

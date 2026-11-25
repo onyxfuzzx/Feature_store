@@ -1,4 +1,3 @@
-import React from "react";
 import { Route, Routes, Navigate } from "react-router-dom";
 import { getAuthToken, getActiveUser } from "./api";
 
@@ -19,8 +18,12 @@ function ProtectedLayout() {
   if (!token) return <Navigate to="/login" replace />;
 
   const user = getActiveUser();
-  const jobAccess = user?.roles?.some((role) => ["admin", "ml_engineer", "data_scientist"].includes(role));
-  const denied = <p role="alert">You do not have permission to access this page.</p>;
+  const jobAccess = user?.roles?.some((role) =>
+    ["admin", "ml_engineer", "data_scientist"].includes(role),
+  );
+  const denied = (
+    <p role="alert">You do not have permission to access this page.</p>
+  );
   return (
     <div className="flex min-h-screen bg-zinc-950 text-zinc-100">
       <Sidebar />
@@ -34,7 +37,10 @@ function ProtectedLayout() {
             <Route path="/models" element={<ModelRegistry />} />
             <Route path="/models/:id" element={<ModelDetail />} />
             <Route path="/jobs" element={jobAccess ? <Jobs /> : denied} />
-            <Route path="/admin" element={user?.roles?.includes("admin") ? <Admin /> : denied} />
+            <Route
+              path="/admin"
+              element={user?.roles?.includes("admin") ? <Admin /> : denied}
+            />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </main>

@@ -1,8 +1,8 @@
 from datetime import datetime
 from uuid import UUID
-from pydantic import Field, field_validator
 
 from app.schemas.common import ORMBase
+from pydantic import Field, field_validator
 
 
 class UserCreate(ORMBase):

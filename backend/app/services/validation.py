@@ -1,9 +1,10 @@
 """One rejection policy for both batch and streaming feature writes."""
+
 import json
 import math
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, StrictBool, model_validator
-from typing import Literal
 
 
 class ValidationRules(BaseModel):
@@ -11,11 +12,18 @@ class ValidationRules(BaseModel):
     allow_null: StrictBool = True
     min_value: float | None = None
     max_value: float | None = None
-    required_type: Literal["int", "integer", "float", "double", "number", "str", "string", "bool", "boolean"] | None = None
+    required_type: (
+        Literal["int", "integer", "float", "double", "number", "str", "string", "bool", "boolean"]
+        | None
+    ) = None
 
     @model_validator(mode="after")
     def ordered_bounds(self):
-        if self.min_value is not None and self.max_value is not None and self.min_value > self.max_value:
+        if (
+            self.min_value is not None
+            and self.max_value is not None
+            and self.min_value > self.max_value
+        ):
             raise ValueError("min_value must not exceed max_value")
         return self
 

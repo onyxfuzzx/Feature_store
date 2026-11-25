@@ -1,9 +1,9 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
-from pydantic import Field, field_validator, model_validator
-from app.services.validation import parse_rules
 
 from app.schemas.common import ORMBase
+from app.services.validation import parse_rules
+from pydantic import Field, field_validator, model_validator
 
 
 class FeatureGroupCreate(ORMBase):
@@ -11,7 +11,9 @@ class FeatureGroupCreate(ORMBase):
     description: str | None = None
     owner_id: UUID | None = None
     tags_json: str | None = None
-    environment: str = Field(default="dev", min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
+    environment: str = Field(
+        default="dev", min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_-]+$"
+    )
 
 
 class FeatureGroupOut(ORMBase):
@@ -118,7 +120,7 @@ class AsOfJoinObservation(ORMBase):
     @field_validator("event_time")
     @classmethod
     def normalize_time(cls, value):
-        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 class AsOfJoinRequest(ORMBase):
@@ -201,6 +203,3 @@ class LineageEdge(ORMBase):
 class LineageGraphOut(ORMBase):
     nodes: list[LineageNode] = []
     edges: list[LineageEdge] = []
-
-
-

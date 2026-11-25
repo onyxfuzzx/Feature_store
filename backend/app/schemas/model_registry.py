@@ -1,16 +1,18 @@
 from datetime import datetime
-from uuid import UUID
-from pydantic import Field, field_validator
 from typing import Literal
+from uuid import UUID
 
 from app.schemas.common import ORMBase
+from pydantic import Field, field_validator
 
 
 class ModelCreate(ORMBase):
     name: str = Field(min_length=1, max_length=120)
     description: str | None = None
     owner_id: UUID | None = None
-    environment: str = Field(default="dev", min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
+    environment: str = Field(
+        default="dev", min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_-]+$"
+    )
 
 
 class ModelOut(ORMBase):
@@ -33,7 +35,9 @@ class ModelVersionCreate(ORMBase):
     @classmethod
     def require_upload(cls, value):
         if value is not None:
-            raise ValueError("Use the artifact upload endpoint; arbitrary artifact URIs are not accepted")
+            raise ValueError(
+                "Use the artifact upload endpoint; arbitrary artifact URIs are not accepted"
+            )
         return value
 
 
@@ -101,4 +105,3 @@ class ModelPredictResponse(ORMBase):
     features_used: dict[str, str | None]
     prediction: dict
     latency_ms: float
-

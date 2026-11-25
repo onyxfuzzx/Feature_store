@@ -1,48 +1,48 @@
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-
-from app.api.deps import require_roles, get_current_user
+from app.api.deps import get_current_user, require_roles
+from app.api.pagination import page, page_limit, page_offset
 from app.core import roles
 from app.db.models.core import User
 from app.db.models.feature_store import (
     FeatureDefinition,
     FeatureGroup,
-    FeatureMaterialization,
     FeatureLineage,
-    FeatureValueOnline,
+    FeatureMaterialization,
     FeatureValueOffline,
+    FeatureValueOnline,
 )
 from app.db.session import get_db
 from app.schemas.feature_store import (
+    AsOfJoinRequest,
+    AsOfJoinResponse,
+    BatchOnlineFeaturesRequest,
+    BatchOnlineFeaturesResponse,
     FeatureDefinitionCreate,
     FeatureDefinitionOut,
     FeatureDefinitionUpdate,
     FeatureGroupCreate,
     FeatureGroupOut,
-    FeatureMaterializationOut,
     FeatureLineageCreate,
     FeatureLineageOut,
-    BatchOnlineFeaturesRequest,
-    BatchOnlineFeaturesResponse,
-    AsOfJoinRequest,
-    AsOfJoinResponse,
-    StreamIngestRequest,
-    StreamIngestResponse,
+    FeatureMaterializationOut,
+    LineageGraphOut,
     QueryDryRunRequest,
     QueryDryRunResponse,
-    LineageGraphOut,
+    StreamIngestRequest,
+    StreamIngestResponse,
 )
-from app.services.materialization import materialize_feature, write_offline_values
-from app.services.validation import parse_rules, validate_value
-from app.services.source_queries import execute_source_query
 from app.services.audit import log_audit
-from app.services.online_store import get_online_store
 from app.services.feature_refs import resolve_feature, resolve_features
-
+from app.services.historical import historical_rows
+from app.services.materialization import materialize_feature, write_offline_values
+from app.services.online_store import get_online_store
+from app.services.source_queries import execute_source_query
+from app.services.validation import parse_rules, validate_value
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/features", tags=["features"])
 
@@ -50,10 +50,22 @@ router = APIRouter(prefix="/features", tags=["features"])
 @router.get(
     "/groups",
     response_model=list[FeatureGroupOut],
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
-def list_feature_groups(db: Session = Depends(get_db)):
-    return db.query(FeatureGroup).order_by(FeatureGroup.created_at.desc()).all()
+def list_feature_groups(
+    response: Response,
+    limit: int = page_limit(),
+    offset: int = page_offset(),
+    db: Session = Depends(get_db),
+):
+    return page(
+        db.query(FeatureGroup).order_by(FeatureGroup.created_at.desc(), FeatureGroup.id.desc()),
+        response,
+        limit,
+        offset,
+    )
 
 
 @router.post(
@@ -91,10 +103,24 @@ def create_feature_group(
 @router.get(
     "",
     response_model=list[FeatureDefinitionOut],
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
-def list_features(db: Session = Depends(get_db)):
-    return db.query(FeatureDefinition).order_by(FeatureDefinition.created_at.desc()).all()
+def list_features(
+    response: Response,
+    limit: int = page_limit(),
+    offset: int = page_offset(),
+    db: Session = Depends(get_db),
+):
+    return page(
+        db.query(FeatureDefinition).order_by(
+            FeatureDefinition.created_at.desc(), FeatureDefinition.id.desc()
+        ),
+        response,
+        limit,
+        offset,
+    )
 
 
 @router.post(
@@ -139,7 +165,9 @@ def create_feature(
 @router.get(
     "/{feature_id}",
     response_model=FeatureDefinitionOut,
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
 def get_feature(feature_id: UUID, db: Session = Depends(get_db)):
     feature = db.get(FeatureDefinition, feature_id)
@@ -166,7 +194,11 @@ def materialize(
         action="MATERIALIZE_FEATURE",
         entity_type="feature_definition",
         entity_id=feature_id,
-        payload={"materialization_id": str(run.id), "status": run.status, "row_count": run.row_count},
+        payload={
+            "materialization_id": str(run.id),
+            "status": run.status,
+            "row_count": run.row_count,
+        },
     )
     return run
 
@@ -174,24 +206,36 @@ def materialize(
 @router.get(
     "/{feature_id}/materializations",
     response_model=list[FeatureMaterializationOut],
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
-def list_materializations(feature_id: UUID, db: Session = Depends(get_db)):
+def list_materializations(
+    feature_id: UUID,
+    response: Response,
+    limit: int = page_limit(),
+    offset: int = page_offset(),
+    db: Session = Depends(get_db),
+):
     feature = db.get(FeatureDefinition, feature_id)
     if not feature:
         raise HTTPException(status_code=404, detail="Feature not found")
 
-    return (
+    return page(
         db.query(FeatureMaterialization)
         .filter(FeatureMaterialization.feature_id == feature_id)
-        .order_by(FeatureMaterialization.started_at.desc())
-        .all()
+        .order_by(FeatureMaterialization.started_at.desc(), FeatureMaterialization.id.desc()),
+        response,
+        limit,
+        offset,
     )
 
 
 @router.get(
     "/{feature_id}/values",
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
 def get_feature_values(feature_id: UUID, db: Session = Depends(get_db)):
     feature = db.get(FeatureDefinition, feature_id)
@@ -276,7 +320,9 @@ def create_feature_lineage(
 @router.get(
     "/{feature_id}/lineage",
     response_model=list[FeatureLineageOut],
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
 def list_feature_lineage(feature_id: UUID, db: Session = Depends(get_db)):
     feature = db.get(FeatureDefinition, feature_id)
@@ -333,7 +379,9 @@ def update_feature(
 @router.post(
     "/online/batch",
     response_model=BatchOnlineFeaturesResponse,
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
 def get_batch_online_features(
     payload: BatchOnlineFeaturesRequest,
@@ -373,26 +421,7 @@ def compute_as_of_join(
 
     resolved_features, feature_id_map = resolve_features(db, payload.features, payload.environment)
 
-    joined_rows = []
-    for obs in payload.observations:
-        row_dict: dict[str, str | None] = {
-            "entity_key": obs.entity_key,
-            "event_time": obs.event_time.isoformat(),
-        }
-        for feat in resolved_features:
-            latest_val = (
-                db.query(FeatureValueOffline.value)
-                .filter(
-                    FeatureValueOffline.entity_key == obs.entity_key,
-                    FeatureValueOffline.feature_id == feat.id,
-                    FeatureValueOffline.event_time <= obs.event_time,
-                )
-                .order_by(FeatureValueOffline.event_time.desc())
-                .first()
-            )
-            row_dict[feature_id_map[feat.id]] = latest_val[0] if latest_val else None
-
-        joined_rows.append(row_dict)
+    joined_rows = historical_rows(db, payload.observations, feature_id_map)
 
     elapsed_ms = round((time.perf_counter() - start_time) * 1000, 3)
 
@@ -416,15 +445,31 @@ def stream_ingest(
     """
     Push streaming events into the online store in real time, with optional offline history write.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     records = []
+    resolved = {}
+    rules = {}
     for record in payload.records:
-        feat = resolve_feature(db, record.feature_id or record.feature_name, payload.environment)
-        errors = validate_value(record.value, parse_rules(feat.validation_rules_json), feat.dtype)
+        reference = str(record.feature_id or record.feature_name)
+        if reference not in resolved:
+            resolved[reference] = resolve_feature(db, reference, payload.environment)
+        feat = resolved[reference]
+        if feat.id not in rules:
+            rules[feat.id] = parse_rules(feat.validation_rules_json)
+        errors = validate_value(record.value, rules[feat.id], feat.dtype)
         if errors:
-            raise HTTPException(422, f"Validation rejected {record.entity_key}: {', '.join(errors)}")
-        records.append({"entity_key": record.entity_key, "feature_id": feat.id,
-                        "value": record.value, "event_time": record.event_time or now, "updated_at": now})
+            raise HTTPException(
+                422, f"Validation rejected {record.entity_key}: {', '.join(errors)}"
+            )
+        records.append(
+            {
+                "entity_key": record.entity_key,
+                "feature_id": feat.id,
+                "value": record.value,
+                "event_time": record.event_time or now,
+                "updated_at": now,
+            }
+        )
     try:
         if payload.persist_offline:
             write_offline_values(db, records)
@@ -433,7 +478,12 @@ def stream_ingest(
     except Exception:
         db.rollback()
         raise
-    return StreamIngestResponse(ingested_count=len(records), online_updated_count=online_updated_count, success=True, timestamp=now)
+    return StreamIngestResponse(
+        ingested_count=len(records),
+        online_updated_count=online_updated_count,
+        success=True,
+        timestamp=now,
+    )
 
 
 @router.post(
@@ -452,23 +502,35 @@ def dry_run_query(
     start = time.perf_counter()
     try:
         columns, raw_rows = execute_source_query(payload.query, payload.limit)
-        rows = [{col: (str(value) if value is not None else None) for col, value in row.items()}
-                for row in raw_rows]
-        return QueryDryRunResponse(columns=columns, rows=rows, row_count=len(rows),
-                                   execution_time_ms=round((time.perf_counter() - start) * 1000, 2))
+        rows = [
+            {col: (str(value) if value is not None else None) for col, value in row.items()}
+            for row in raw_rows
+        ]
+        return QueryDryRunResponse(
+            columns=columns,
+            rows=rows,
+            row_count=len(rows),
+            execution_time_ms=round((time.perf_counter() - start) * 1000, 2),
+        )
     except Exception as exc:
-        return QueryDryRunResponse(is_valid=False, error=str(exc),
-                                   execution_time_ms=round((time.perf_counter() - start) * 1000, 2))
+        return QueryDryRunResponse(
+            is_valid=False,
+            error=str(exc),
+            execution_time_ms=round((time.perf_counter() - start) * 1000, 2),
+        )
 
 
 @router.get(
     "/{feature_id}/lineage-graph",
     response_model=LineageGraphOut,
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
 def get_feature_lineage_graph(
     feature_id: UUID,
     db: Session = Depends(get_db),
 ):
     from app.services.lineage import graph
+
     return graph(db, feature_id=feature_id)

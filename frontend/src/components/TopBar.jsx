@@ -1,21 +1,33 @@
-import React, { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { fetchApi } from "../api";
-import { Search, Layers, Cpu, Database } from "lucide-react";
+import { Search, Layers, Cpu } from "lucide-react";
 
 export default function TopBar() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState(null);
   const [open, setOpen] = useState(false);
-  const [health, setHealth] = useState(null), [searchError, setSearchError] = useState(null);
+  const [health, setHealth] = useState(null),
+    [searchError, setSearchError] = useState(null);
   const navigate = useNavigate();
   const ref = useRef(null);
 
   useEffect(() => {
     let mounted = true;
-    const check = async () => { try { const value = await fetchApi("/ready"); if (mounted) setHealth(value); } catch { if (mounted) setHealth({ status: "unavailable" }); } };
-    check(); const timer = setInterval(check, 30000);
-    return () => { mounted = false; clearInterval(timer); };
+    const check = async () => {
+      try {
+        const value = await fetchApi("/ready");
+        if (mounted) setHealth(value);
+      } catch {
+        if (mounted) setHealth({ status: "unavailable" });
+      }
+    };
+    check();
+    const timer = setInterval(check, 30000);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -52,7 +64,11 @@ export default function TopBar() {
     <header className="h-16 border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-30 px-6 flex items-center justify-between">
       {/* Search Input */}
       <div className="relative w-80 max-w-md" ref={ref}>
-        {searchError && <p role="status" className="text-rose-300 text-xs">Search unavailable: {searchError}</p>}
+        {searchError && (
+          <p role="status" className="text-rose-300 text-xs">
+            Search unavailable: {searchError}
+          </p>
+        )}
         <div className="relative flex items-center">
           <Search className="w-4 h-4 text-zinc-400 absolute left-3 pointer-events-none" />
           <input
@@ -71,11 +87,15 @@ export default function TopBar() {
         {open && results && (
           <div className="absolute left-0 right-0 mt-2 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl p-2 z-50 text-xs max-h-80 overflow-y-auto">
             {results.features.length === 0 && results.models.length === 0 && (
-              <div className="p-3 text-center text-zinc-500">No results found for "{query}"</div>
+              <div className="p-3 text-center text-zinc-500">
+                No results found for "{query}"
+              </div>
             )}
             {results.features.length > 0 && (
               <div className="mb-2">
-                <div className="px-2 py-1 text-[10px] font-mono uppercase text-zinc-500 font-semibold">Features</div>
+                <div className="px-2 py-1 text-[10px] font-mono uppercase text-zinc-500 font-semibold">
+                  Features
+                </div>
                 {results.features.map((f) => (
                   <div
                     key={f.id}
@@ -94,7 +114,9 @@ export default function TopBar() {
             )}
             {results.models.length > 0 && (
               <div>
-                <div className="px-2 py-1 text-[10px] font-mono uppercase text-zinc-500 font-semibold">Models</div>
+                <div className="px-2 py-1 text-[10px] font-mono uppercase text-zinc-500 font-semibold">
+                  Models
+                </div>
                 {results.models.map((m) => (
                   <div
                     key={m.id}
@@ -117,9 +139,19 @@ export default function TopBar() {
 
       {/* Right status items */}
       <div className="flex items-center gap-3">
-        <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium font-mono ${health?.status === "ready" ? "border-emerald-800 text-emerald-400" : "border-amber-800 text-amber-300"}`}>
+        <div
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium font-mono ${health?.status === "ready" ? "border-emerald-800 text-emerald-400" : "border-amber-800 text-amber-300"}`}
+        >
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          <span role="status">{health?.status === "ready" ? (health.cache === "postgres_fallback" ? "Ready - cache fallback" : "Service Ready") : health ? "Service Unavailable" : "Checking Service"}</span>
+          <span role="status">
+            {health?.status === "ready"
+              ? health.cache === "postgres_fallback"
+                ? "Ready - cache fallback"
+                : "Service Ready"
+              : health
+                ? "Service Unavailable"
+                : "Checking Service"}
+          </span>
         </div>
       </div>
     </header>

@@ -1,43 +1,46 @@
 import json
 import time
-from datetime import datetime, timezone
+from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
-from typing import Literal
-
-from app.api.deps import require_roles, get_current_user
+from app.api.deps import get_current_user, require_roles
+from app.api.pagination import page, page_limit, page_offset
 from app.core import roles
 from app.db.models.core import User
-from app.db.models.model_registry import Model, ModelVersion, ModelLineage, ModelStageHistory
+from app.db.models.model_registry import (
+    InferenceObservation,
+    Model,
+    ModelLineage,
+    ModelStageHistory,
+    ModelVersion,
+)
 from app.db.session import get_db
+from app.schemas.drift import BaselineCreate, DriftRunCreate
+from app.schemas.feature_store import LineageGraphOut
 from app.schemas.model_registry import (
     ModelCreate,
-    ModelOut,
-    ModelVersionCreate,
-    ModelVersionOut,
-    ModelLineageOut,
-    ModelVersionDetailOut,
     ModelHydrateRequest,
     ModelHydrateResponse,
+    ModelLineageOut,
+    ModelOut,
     ModelPredictRequest,
     ModelPredictResponse,
+    ModelVersionCreate,
+    ModelVersionDetailOut,
+    ModelVersionOut,
 )
-from app.schemas.feature_store import LineageGraphOut
-from app.services.audit import log_audit
-from app.services.feature_refs import resolve_feature, resolve_features
-from app.services.registry import transition
-from app.schemas.drift import BaselineCreate, DriftRunCreate
 from app.services import drift
-from app.services.drift import calculate_psi
-from app.db.models.model_registry import InferenceObservation
-from app.services.validation import coerce_value
-
 from app.services.artifacts import artifact_path, store_artifact
-from app.services.model_runtime import load_model, hydrate, score
-
+from app.services.audit import log_audit
+from app.services.drift import calculate_psi as calculate_psi
+from app.services.feature_refs import resolve_feature, resolve_features
+from app.services.model_runtime import hydrate, load_model, score
+from app.services.registry import transition
+from app.services.validation import coerce_value
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/models", tags=["models"])
 
@@ -45,10 +48,19 @@ router = APIRouter(prefix="/models", tags=["models"])
 @router.get(
     "",
     response_model=list[ModelOut],
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
-def list_models(db: Session = Depends(get_db)):
-    return db.query(Model).order_by(Model.created_at.desc()).all()
+def list_models(
+    response: Response,
+    limit: int = page_limit(),
+    offset: int = page_offset(),
+    db: Session = Depends(get_db),
+):
+    return page(
+        db.query(Model).order_by(Model.created_at.desc(), Model.id.desc()), response, limit, offset
+    )
 
 
 @router.post(
@@ -87,7 +99,9 @@ def create_model(
 @router.get(
     "/{model_id}",
     response_model=ModelOut,
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
 def get_model(model_id: UUID, db: Session = Depends(get_db)):
     model = db.get(Model, model_id)
@@ -99,17 +113,27 @@ def get_model(model_id: UUID, db: Session = Depends(get_db)):
 @router.get(
     "/{model_id}/versions",
     response_model=list[ModelVersionOut],
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
-def list_model_versions(model_id: UUID, db: Session = Depends(get_db)):
+def list_model_versions(
+    model_id: UUID,
+    response: Response,
+    limit: int = page_limit(),
+    offset: int = page_offset(),
+    db: Session = Depends(get_db),
+):
     model = db.get(Model, model_id)
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
-    return (
+    return page(
         db.query(ModelVersion)
         .filter(ModelVersion.model_id == model_id)
-        .order_by(ModelVersion.created_at.desc())
-        .all()
+        .order_by(ModelVersion.created_at.desc(), ModelVersion.id.desc()),
+        response,
+        limit,
+        offset,
     )
 
 
@@ -130,22 +154,33 @@ def create_model_version(
         raise HTTPException(404, "Model not found")
     if db.query(ModelVersion).filter_by(model_id=model_id, version=payload.version).first():
         raise HTTPException(409, "Model version already exists")
-    version = ModelVersion(model_id=model_id, version=payload.version, stage="Staging",
-                           metrics_json=payload.metrics_json, params_json=payload.params_json)
+    version = ModelVersion(
+        model_id=model_id,
+        version=payload.version,
+        stage="Staging",
+        metrics_json=payload.metrics_json,
+        params_json=payload.params_json,
+    )
     db.add(version)
     db.flush()
     transition(db, version, payload.stage, current_user.id)
-    log_audit(db, current_user.id, "CREATE_MODEL_VERSION", "model_version", version.id,
-              {"model_id": str(model_id), "version": version.version, "stage": version.stage}, commit=False)
+    log_audit(
+        db,
+        current_user.id,
+        "CREATE_MODEL_VERSION",
+        "model_version",
+        version.id,
+        {"model_id": str(model_id), "version": version.version, "stage": version.stage},
+        commit=False,
+    )
     db.commit()
     db.refresh(version)
     return version
 
 
-from pydantic import BaseModel
-
 class ModelStageUpdate(BaseModel):
     to_stage: Literal["Staging", "Production", "Archived"]
+
 
 class ModelLineageCreatePayload(BaseModel):
     feature_ids_json: str | None = None
@@ -193,18 +228,27 @@ def link_model_version_lineage(
         references = json.loads(payload.feature_ids_json or "[]")
     except ValueError as exc:
         raise HTTPException(422, "feature_ids_json must be a JSON list") from exc
-    if not isinstance(references, list) or len(references) > 100 or not all(isinstance(item, str) for item in references):
+    if (
+        not isinstance(references, list)
+        or len(references) > 100
+        or not all(isinstance(item, str) for item in references)
+    ):
         raise HTTPException(422, "Model lineage requires a list of at most 100 feature references")
     model = db.get(Model, version.model_id)
     features, _ = resolve_features(db, references, model.environment)
     # Do not let the displayed/training lineage omit features the artifact actually serves.
     if version.artifact_uri and version.artifact_uri.startswith("artifact://"):
         from app.services.model_runtime import LinearArtifact
+
         try:
-            manifest = LinearArtifact.model_validate_json(artifact_path(version.artifact_uri, version.model_id, version.id).read_bytes())
+            manifest = LinearArtifact.model_validate_json(
+                artifact_path(version.artifact_uri, version.model_id, version.id).read_bytes()
+            )
         except (ValueError, OSError):
             manifest = None
-        required = {item.feature_id for item in manifest.inputs if item.feature_id} if manifest else set()
+        required = (
+            {item.feature_id for item in manifest.inputs if item.feature_id} if manifest else set()
+        )
         if not required.issubset({feature.id for feature in features}):
             raise HTTPException(422, "Cannot unlink a feature required by the registered artifact")
     payload.feature_ids_json = json.dumps([str(feature.id) for feature in features])
@@ -241,24 +285,24 @@ def link_model_version_lineage(
 @router.get(
     "/versions/{version_id}/lineage",
     response_model=list[ModelLineageOut],
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
 def get_model_version_lineage(version_id: UUID, db: Session = Depends(get_db)):
     version = db.get(ModelVersion, version_id)
     if not version:
         raise HTTPException(status_code=404, detail="Model version not found")
 
-    return (
-        db.query(ModelLineage)
-        .filter(ModelLineage.model_version_id == version_id)
-        .all()
-    )
+    return db.query(ModelLineage).filter(ModelLineage.model_version_id == version_id).all()
 
 
 @router.get(
     "/versions/{version_id}/detail",
     response_model=ModelVersionDetailOut,
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
 def get_model_version_detail(version_id: UUID, db: Session = Depends(get_db)):
     version = db.get(ModelVersion, version_id)
@@ -287,7 +331,12 @@ def get_model_version_detail(version_id: UUID, db: Session = Depends(get_db)):
     )
 
 
-@router.get("/{model_id}/drift", dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))])
+@router.get(
+    "/{model_id}/drift",
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
+)
 def get_model_drift(model_id: UUID, version: str | None = None, db: Session = Depends(get_db)):
     model = db.get(Model, model_id)
     if not model:
@@ -298,24 +347,49 @@ def get_model_drift(model_id: UUID, version: str | None = None, db: Session = De
         if not selected:
             raise HTTPException(404, "Model version not found")
     else:
-        selected = query.filter_by(stage="Production").first() or query.order_by(ModelVersion.created_at.desc()).first()
+        selected = (
+            query.filter_by(stage="Production").first()
+            or query.order_by(ModelVersion.created_at.desc()).first()
+        )
     return drift.summary(db, model, selected)
 
 
-@router.post("/{model_id}/versions/{version_id}/drift-baseline", dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST))])
-def create_drift_baseline(model_id: UUID, version_id: UUID, payload: BaselineCreate,
-                         db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+@router.post(
+    "/{model_id}/versions/{version_id}/drift-baseline",
+    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST))],
+)
+def create_drift_baseline(
+    model_id: UUID,
+    version_id: UUID,
+    payload: BaselineCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     version = db.get(ModelVersion, version_id)
     if not version or version.model_id != model_id:
         raise HTTPException(404, "Model version not found")
     baseline = drift.capture_baseline(db, version, payload)
-    log_audit(db, current_user.id, "CAPTURE_DRIFT_BASELINE", "model_version", version.id,
-              {"baseline_id": str(baseline.id)}, commit=False)
+    log_audit(
+        db,
+        current_user.id,
+        "CAPTURE_DRIFT_BASELINE",
+        "model_version",
+        version.id,
+        {"baseline_id": str(baseline.id)},
+        commit=False,
+    )
     db.commit()
-    return {"id": str(baseline.id), "version_id": str(version.id), "distributions": baseline.distributions}
+    return {
+        "id": str(baseline.id),
+        "version_id": str(version.id),
+        "distributions": baseline.distributions,
+    }
 
 
-@router.post("/{model_id}/drift/runs", dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST))])
+@router.post(
+    "/{model_id}/drift/runs",
+    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST))],
+)
 def run_model_drift(model_id: UUID, payload: DriftRunCreate, db: Session = Depends(get_db)):
     version = serving_version(db, model_id, payload.version)
     run = drift.record_run(db, version, payload)
@@ -345,6 +419,7 @@ def upload_model_artifact(
     try:
         version.artifact_uri = uri
         from app.services.model_runtime import LinearArtifact
+
         try:
             manifest = LinearArtifact.model_validate_json(path.read_bytes())
         except ValueError:
@@ -359,8 +434,15 @@ def upload_model_artifact(
                 lineage = ModelLineage(model_version_id=version.id)
                 db.add(lineage)
             lineage.feature_ids_json = json.dumps(identifiers)
-        log_audit(db, current_user.id, "UPLOAD_MODEL_ARTIFACT", "model_version", str(version.id),
-                  {"filename": file.filename, "size_bytes": size}, commit=False)
+        log_audit(
+            db,
+            current_user.id,
+            "UPLOAD_MODEL_ARTIFACT",
+            "model_version",
+            str(version.id),
+            {"filename": file.filename, "size_bytes": size},
+            commit=False,
+        )
         db.commit()
     except Exception:
         db.rollback()
@@ -371,7 +453,9 @@ def upload_model_artifact(
 
 @router.get(
     "/{model_id}/versions/{version_id}/artifact",
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
 def download_model_artifact(
     model_id: UUID,
@@ -388,19 +472,24 @@ def download_model_artifact(
     path = artifact_path(version.artifact_uri, model_id, version_id)
     if not path.is_file():
         raise HTTPException(404, "Artifact file not found on storage")
-    return FileResponse(path=path, filename=f"model-{version.version}.bin", media_type="application/octet-stream")
+    return FileResponse(
+        path=path, filename=f"model-{version.version}.bin", media_type="application/octet-stream"
+    )
 
 
 @router.get(
     "/{model_id}/lineage-graph",
     response_model=LineageGraphOut,
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
 def get_model_lineage_graph(
     model_id: UUID,
     db: Session = Depends(get_db),
 ):
     from app.services.lineage import graph
+
     return graph(db, model_id=model_id)
 
 
@@ -411,29 +500,47 @@ def serving_version(db, model_id, requested_version):
     if requested_version:
         version = query.filter(ModelVersion.version == requested_version).first()
     else:
-        version = query.filter(ModelVersion.stage == "Production").order_by(ModelVersion.created_at.desc()).first()
+        version = (
+            query.filter(ModelVersion.stage == "Production")
+            .order_by(ModelVersion.created_at.desc())
+            .first()
+        )
     if not version:
-        raise HTTPException(404, "Requested version unavailable; specify a version or promote one to Production")
+        raise HTTPException(
+            404, "Requested version unavailable; specify a version or promote one to Production"
+        )
     return version
 
 
 @router.post(
-    "/{model_id}/hydrate", response_model=ModelHydrateResponse,
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    "/{model_id}/hydrate",
+    response_model=ModelHydrateResponse,
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
-def hydrate_model_features(model_id: UUID, payload: ModelHydrateRequest, db: Session = Depends(get_db)):
+def hydrate_model_features(
+    model_id: UUID, payload: ModelHydrateRequest, db: Session = Depends(get_db)
+):
     start = time.perf_counter()
     version = serving_version(db, model_id, payload.version)
     artifact = load_model(version, db)
     records = hydrate(artifact, payload.entity_keys, db)
-    return ModelHydrateResponse(model_id=model_id, version=version.version,
-                                features=[item.name for item in artifact.inputs], hydrated_records=records,
-                                latency_ms=round((time.perf_counter() - start) * 1000, 3))
+    return ModelHydrateResponse(
+        model_id=model_id,
+        version=version.version,
+        features=[item.name for item in artifact.inputs],
+        hydrated_records=records,
+        latency_ms=round((time.perf_counter() - start) * 1000, 3),
+    )
 
 
 @router.post(
-    "/{model_id}/predict", response_model=ModelPredictResponse,
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    "/{model_id}/predict",
+    response_model=ModelPredictResponse,
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
 def predict_with_model(model_id: UUID, payload: ModelPredictRequest, db: Session = Depends(get_db)):
     start = time.perf_counter()
@@ -442,10 +549,22 @@ def predict_with_model(model_id: UUID, payload: ModelPredictRequest, db: Session
     record = hydrate(artifact, [payload.entity_key], db)[0]
     used, prediction = score(artifact, record, payload.runtime_features)
     prediction["model_version"] = version.version
-    observed = {str(item.feature_id): float(coerce_value(used[item.name], item.dtype))
-                for item in artifact.inputs if item.feature_id}
-    db.add(InferenceObservation(model_version_id=version.id, entity_key=payload.entity_key, values_json=observed))
+    observed = {
+        str(item.feature_id): float(coerce_value(used[item.name], item.dtype))
+        for item in artifact.inputs
+        if item.feature_id
+    }
+    db.add(
+        InferenceObservation(
+            model_version_id=version.id, entity_key=payload.entity_key, values_json=observed
+        )
+    )
     db.commit()
-    return ModelPredictResponse(model_id=model_id, version=version.version, entity_key=payload.entity_key,
-                                 features_used=used, prediction=prediction,
-                                 latency_ms=round((time.perf_counter() - start) * 1000, 3))
+    return ModelPredictResponse(
+        model_id=model_id,
+        version=version.version,
+        entity_key=payload.entity_key,
+        features_used=used,
+        prediction=prediction,
+        latency_ms=round((time.perf_counter() - start) * 1000, 3),
+    )

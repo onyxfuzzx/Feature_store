@@ -1,7 +1,5 @@
 import json
-from datetime import datetime
-
-from sqlalchemy import text
+from datetime import UTC, datetime
 
 from app.core.config import settings
 from app.core.roles import ADMIN, ANALYST, DATA_SCIENTIST, ML_ENGINEER
@@ -9,8 +7,9 @@ from app.core.security import hash_password
 from app.db.models.core import Role, User, UserRole
 from app.db.models.feature_store import FeatureDefinition, FeatureGroup
 from app.db.models.jobs import JobDefinition
-from app.db.models.model_registry import Model, ModelStageHistory, ModelVersion, ModelLineage
+from app.db.models.model_registry import Model, ModelLineage, ModelStageHistory, ModelVersion
 from app.db.session import SessionLocal
+from sqlalchemy import text
 
 
 def seed(include_demo: bool = True) -> None:
@@ -129,16 +128,31 @@ def seed(include_demo: bool = True) -> None:
             db.commit()
             db.refresh(version)
             from uuid import uuid4
+
             from app.services.artifacts import artifact_path
+
             version.artifact_uri = f"artifact://{model.id}/{version.id}/{uuid4()}"
             path = artifact_path(version.artifact_uri, model.id, version.id)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({
-                "format": "featureops.linear.v1", "task": "binary_classification",
-                "inputs": [{"name": feature.name, "feature_id": str(feature.id), "dtype": "float"}],
-                "coefficients": [0.01], "intercept": -1.0, "classes": [0, 1],
-            }))
-            db.add(ModelLineage(model_version_id=version.id, feature_ids_json=json.dumps([str(feature.id)])))
+            path.write_text(
+                json.dumps(
+                    {
+                        "format": "featureops.linear.v1",
+                        "task": "binary_classification",
+                        "inputs": [
+                            {"name": feature.name, "feature_id": str(feature.id), "dtype": "float"}
+                        ],
+                        "coefficients": [0.01],
+                        "intercept": -1.0,
+                        "classes": [0, 1],
+                    }
+                )
+            )
+            db.add(
+                ModelLineage(
+                    model_version_id=version.id, feature_ids_json=json.dumps([str(feature.id)])
+                )
+            )
             db.commit()
 
         if not db.query(ModelStageHistory).first():
@@ -147,7 +161,7 @@ def seed(include_demo: bool = True) -> None:
                 from_stage="Staging",
                 to_stage="Production",
                 changed_by=admin.id,
-                changed_at=datetime.utcnow(),
+                changed_at=datetime.now(UTC),
             )
             db.add(history)
             db.commit()

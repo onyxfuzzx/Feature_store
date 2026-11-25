@@ -1,6 +1,8 @@
 from datetime import datetime
 from uuid import UUID
+
 from app.schemas.common import ORMBase
+
 
 class AuditLogOut(ORMBase):
     id: UUID

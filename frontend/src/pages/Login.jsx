@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { loginApi } from "../api";
 import { Button } from "../components/ui/Button";
@@ -36,8 +36,12 @@ export default function Login() {
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 mb-4 shadow-inner">
             <Database className="w-6 h-6" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-100">Sign in to FeatureOps</h1>
-          <p className="text-sm text-zinc-400 mt-1">Enterprise Feature Store & Model Registry Platform</p>
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-100">
+            Sign in to FeatureOps
+          </h1>
+          <p className="text-sm text-zinc-400 mt-1">
+            Enterprise Feature Store & Model Registry Platform
+          </p>
         </div>
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 sm:p-8 shadow-2xl">
@@ -50,7 +54,10 @@ export default function Login() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-xs font-medium text-zinc-300 mb-1.5" htmlFor="email">
+              <label
+                className="block text-xs font-medium text-zinc-300 mb-1.5"
+                htmlFor="email"
+              >
                 Email Address
               </label>
               <div className="relative">
@@ -68,7 +75,10 @@ export default function Login() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-zinc-300 mb-1.5" htmlFor="password">
+              <label
+                className="block text-xs font-medium text-zinc-300 mb-1.5"
+                htmlFor="password"
+              >
                 Password
               </label>
               <div className="relative">
@@ -85,11 +95,16 @@ export default function Login() {
               </div>
             </div>
 
-            <Button type="submit" variant="primary" size="lg" className="w-full mt-2" loading={loading}>
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              className="w-full mt-2"
+              loading={loading}
+            >
               Sign In <ArrowRight className="w-4 h-4 ml-1" />
             </Button>
           </form>
-
         </div>
       </div>
     </div>

@@ -1,5 +1,3 @@
-import React from "react";
-
 export function Card({ children, className = "", hover = false, ...props }) {
   return (
     <div
@@ -15,8 +13,12 @@ export function CardHeader({ title, description, action }) {
   return (
     <div className="flex items-start justify-between gap-4 mb-4">
       <div>
-        <h3 className="text-sm font-semibold text-zinc-100 tracking-tight">{title}</h3>
-        {description && <p className="text-xs text-zinc-400 mt-0.5">{description}</p>}
+        <h3 className="text-sm font-semibold text-zinc-100 tracking-tight">
+          {title}
+        </h3>
+        {description && (
+          <p className="text-xs text-zinc-400 mt-0.5">{description}</p>
+        )}
       </div>
       {action && <div>{action}</div>}
     </div>

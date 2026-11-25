@@ -1,19 +1,7 @@
-# Security Policy
+# Security reporting
 
-## Supported Versions
+Security fixes currently target the repository's 0.1.x development line. There is no published long-term support or incident response SLA.
 
-We actively support and provide security updates for the latest major version.
+Do not post exploit details or credentials in a public issue. Use the repository's GitHub Security tab to submit a private vulnerability report if enabled, or contact a maintainer privately using their repository profile contact method. Include affected revision, environment, reproduction steps and impact; redact passwords, API keys, tokens and private data. Maintainers will assess reports as availability permits.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
-
-## Reporting a Vulnerability
-
-The security of this project is a top priority. If you believe you have found a security vulnerability in the Feature Store & Model Registry, please follow these guidelines:
-
-1. **Do not open a public GitHub issue** to report a security vulnerability.
-2. Send an email to the project maintainers or open a **Private Security Advisory** on GitHub via the `Security` tab of this repository.
-3. Include detailed steps to reproduce the issue, including environment details, requests sent, and proof of concept where applicable.
-
-We will acknowledge receipt of your report within 48 hours and work to provide a fix in a timely manner. Thank you for helping keep our open-source software and its community safe!
+Deployment operators own TLS, network access, account/credential rotation, backups and monitoring. See [operations](docs/OPERATIONS.md) and the [P0 configuration guide](docs/P0_IMPLEMENTATION.md). Dependency audits are point-in-time advisory checks and do not replace a security review.

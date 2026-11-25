@@ -1,4 +1,5 @@
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
+
 from pydantic import BaseModel, Field, FiniteFloat, field_validator, model_validator
 
 
@@ -9,7 +10,7 @@ class ObservationWindow(BaseModel):
     @field_validator("window_start", "window_end")
     @classmethod
     def utc(cls, value):
-        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
     @model_validator(mode="after")
     def ordered(self):
@@ -24,7 +25,9 @@ class BaselineCreate(ObservationWindow):
     @field_validator("samples")
     @classmethod
     def bounded_samples(cls, value):
-        if sum(map(len, value.values())) > 100000 or any(len(items) < 2 for items in value.values()):
+        if sum(map(len, value.values())) > 100000 or any(
+            len(items) < 2 for items in value.values()
+        ):
             raise ValueError("Provide 2+ training samples per feature, at most 100000 total")
         return value
 

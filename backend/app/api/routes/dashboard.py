@@ -1,15 +1,23 @@
-from datetime import datetime, timezone
-
-from fastapi import APIRouter, Depends
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from datetime import UTC, datetime
 
 from app.api.deps import require_roles
 from app.core import roles
-from app.db.models.feature_store import FeatureDefinition, FeatureMaterialization, FeatureValueOnline
+from app.db.models.feature_store import (
+    FeatureDefinition,
+    FeatureMaterialization,
+    FeatureValueOnline,
+)
 from app.db.models.model_registry import Model, ModelStageHistory, ModelVersion
 from app.db.session import get_db
-from app.schemas.dashboard import DashboardSummary, DashboardStat, MaterializationItem, PromotionItem
+from app.schemas.dashboard import (
+    DashboardStat,
+    DashboardSummary,
+    MaterializationItem,
+    PromotionItem,
+)
+from fastapi import APIRouter, Depends
+from sqlalchemy import func
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -17,16 +25,15 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 @router.get(
     "/summary",
     response_model=DashboardSummary,
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+    dependencies=[
+        Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))
+    ],
 )
 def summary(db: Session = Depends(get_db)):
-    feature_count = db.query(func.count(FeatureDefinition.id)).scalar() or 0
     model_count = db.query(func.count(Model.id)).scalar() or 0
 
     last_materialization = (
-        db.query(FeatureMaterialization)
-        .order_by(FeatureMaterialization.started_at.desc())
-        .first()
+        db.query(FeatureMaterialization).order_by(FeatureMaterialization.started_at.desc()).first()
     )
     if last_materialization and last_materialization.started_at:
         st = last_materialization.started_at
@@ -42,16 +49,19 @@ def summary(db: Session = Depends(get_db)):
 
     # Serving freshness is the latest event time versus the feature's declared cadence.
     active = db.query(FeatureDefinition).filter(FeatureDefinition.status == "active").all()
-    latest_events = dict(db.query(FeatureValueOnline.feature_id, func.max(FeatureValueOnline.event_time))
-                         .group_by(FeatureValueOnline.feature_id).all())
+    latest_events = dict(
+        db.query(FeatureValueOnline.feature_id, func.max(FeatureValueOnline.event_time))
+        .group_by(FeatureValueOnline.feature_id)
+        .all()
+    )
     seconds = {"streaming": 300, "hourly": 3600, "daily": 86400, "weekly": 604800}
     known = [feature for feature in active if feature.refresh_interval in seconds]
     fresh = 0
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for feature in known:
         event_time = latest_events.get(feature.id)
         if event_time:
-            event_time = event_time.replace(tzinfo=timezone.utc) if event_time.tzinfo is None else event_time
+            event_time = event_time.replace(tzinfo=UTC) if event_time.tzinfo is None else event_time
             age = (now - event_time).total_seconds()
             fresh += 0 <= age <= seconds[feature.refresh_interval]
     freshness_pct = f"{round(100 * fresh / len(known))}%" if known else "N/A"
@@ -59,7 +69,9 @@ def summary(db: Session = Depends(get_db)):
 
     stats = [
         DashboardStat(label="Active Features", value=str(len(active)), note="Active definitions"),
-        DashboardStat(label="Models in Registry", value=str(model_count), note="All lifecycle stages"),
+        DashboardStat(
+            label="Models in Registry", value=str(model_count), note="All lifecycle stages"
+        ),
         DashboardStat(
             label="Last Materialization",
             value=last_materialization_value,
@@ -96,7 +108,9 @@ def summary(db: Session = Depends(get_db)):
         .all()
     )
     for promo, ver_str, mod_name in promotions:
-        model_display = f"{mod_name or 'Model'} v{ver_str}" if ver_str else str(promo.model_version_id)[:8]
+        model_display = (
+            f"{mod_name or 'Model'} v{ver_str}" if ver_str else str(promo.model_version_id)[:8]
+        )
         recent_promotions.append(
             PromotionItem(
                 model=model_display,

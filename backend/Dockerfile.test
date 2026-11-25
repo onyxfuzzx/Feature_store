@@ -1,0 +1,10 @@
+ARG PYTHON_VERSION=3.11
+FROM python:${PYTHON_VERSION}-slim
+WORKDIR /work
+COPY backend/requirements-test.txt /tmp/requirements-test.txt
+RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements-test.txt
+COPY . .
+ENV TEST_DATABASE_URL=postgresql+psycopg2://postgres:isolated-test-password@db:5432/featureops_test \
+    TEST_REDIS_URL=redis://redis:6379/0
+WORKDIR /work/backend
+CMD ["pytest", "tests", "-q"]

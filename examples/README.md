@@ -20,7 +20,7 @@ A complete script demonstrating:
 Make sure the backend is running (`uvicorn app.main:app --port 8000`):
 
 ```bash
-# Install scikit-learn (optional, for actual fitting)
+# Install required training dependencies
 pip install scikit-learn
 
 # Run the end-to-end pipeline
@@ -30,7 +30,7 @@ python examples/01_churn_prediction_e2e.py
 
 ## Current executable workflow
 
-Both examples require real credentials (`ADMIN_EMAIL`, `ADMIN_PASSWORD`) and `FEATURE_STORE_URL` (Docker default `http://localhost:5173/api`). Install `backend/requirements-test.txt` for scikit-learn/httpx. The churn script creates independent features/model/version, verifies historical boundaries and trained predictions, and stores actual drift evidence. It does not reuse an unrelated model or substitute simulated weights. The registered-model example verifies the supported JSON linear/logistic serving format.
+Both examples require real credentials (`ADMIN_EMAIL`, `ADMIN_PASSWORD`) and `FEATURE_STORE_URL` (Docker default `http://localhost:5173/api`). Install the hash-locked `backend/requirements-test.txt` on Linux, or `backend/requirements-test.in` for native Windows development, for scikit-learn/httpx. The churn script creates independent features/model/version, verifies historical boundaries and trained predictions, and stores actual drift evidence. It does not reuse an unrelated model or substitute simulated weights. The registered-model example verifies the supported JSON linear/logistic serving format.
 
 Run both from the repository root with private Docker credentials:
 

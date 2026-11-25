@@ -45,4 +45,4 @@ After restore, verify readiness, administrator login, role enforcement, a featur
 - For a missing artifact, restore the matching volume or upload an appropriate artifact through the managed endpoint. Arbitrary `file://` paths are not a recovery mechanism.
 - If a P1 migration stops on duplicate identities or multiple Production versions, run the reported diagnostic query, choose the intended identities/stages, preserve the affected records/history, and retry the migration.
 
-Define backup frequency, retention, alert grace periods and recovery objectives for the deployment's workload. P2 load/latency testing is still required before making capacity promises.
+Define backup frequency, retention, alert grace periods and recovery objectives for the deployment's workload. See [performance measurements and retention planning](PERFORMANCE.md) for the verified local workload. Set deployment-specific SLOs only after measuring that deployment.

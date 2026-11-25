@@ -1,25 +1,38 @@
-import secrets
 import hashlib
+import secrets
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, get_current_user
+from app.api.deps import get_current_user, get_db
+from app.api.pagination import page, page_limit, page_offset
 from app.db.models.core import APIKey, User
-from app.schemas.api_keys import APIKeyCreate, APIKeyOut, APIKeyCreateOut
+from app.schemas.api_keys import APIKeyCreate, APIKeyCreateOut, APIKeyOut
 from app.services.audit import log_audit
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
 
+
 @router.get("", response_model=list[APIKeyOut])
 def list_api_keys(
+    response: Response,
+    limit: int = page_limit(),
+    offset: int = page_offset(),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
     List all active API keys for the current user.
     """
-    return db.query(APIKey).filter(APIKey.user_id == current_user.id, APIKey.is_active == True).all()
+    return page(
+        db.query(APIKey)
+        .filter(APIKey.user_id == current_user.id, APIKey.is_active.is_(True))
+        .order_by(APIKey.created_at.desc(), APIKey.id.desc()),
+        response,
+        limit,
+        offset,
+    )
+
 
 @router.post("", response_model=APIKeyCreateOut, status_code=status.HTTP_201_CREATED)
 def create_api_key(
@@ -62,6 +75,7 @@ def create_api_key(
         created_at=db_key.created_at,
         plain_key=raw_key,
     )
+
 
 @router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
 def revoke_api_key(

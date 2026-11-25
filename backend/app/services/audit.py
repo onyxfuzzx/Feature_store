@@ -1,7 +1,9 @@
 import json
 from uuid import UUID
-from sqlalchemy.orm import Session
+
 from app.db.models.core import AuditLog
+from sqlalchemy.orm import Session
+
 
 def log_audit(
     db: Session,
@@ -20,7 +22,7 @@ def log_audit(
         action=action,
         entity_type=entity_type,
         entity_id=str(entity_id),
-        payload_json=json.dumps(payload) if payload else None
+        payload_json=json.dumps(payload) if payload else None,
     )
     db.add(log)
     if commit:

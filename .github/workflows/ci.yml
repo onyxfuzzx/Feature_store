@@ -10,6 +10,9 @@ jobs:
   backend-test:
     name: Backend Integration Tests
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
     services:
       postgres:
         image: postgres:16-alpine
@@ -33,13 +36,25 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python }}
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r backend/requirements-test.txt
-          pip install -e sdk/
+          pip install --require-hashes -r backend/requirements-test.txt
+          pip install --no-deps --no-build-isolation -e sdk/
+
+      - name: Python lint and formatting
+        run: |
+          ruff check backend sdk examples scripts
+          ruff format --check backend sdk examples scripts
+
+      - name: Validate SDK wheel, sdist and installed CLI
+        run: sh scripts/verify-sdk.sh
+
+      - name: Audit runtime dependencies
+        if: matrix.python == '3.11'
+        run: pip-audit -r backend/requirements.txt --no-deps --disable-pip
 
       - name: Run Pytest Suite
         run: |
@@ -49,18 +64,28 @@ jobs:
   frontend-build:
     name: Frontend Build & Verify
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [24, 26]
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node }}
 
       - name: Install Frontend Dependencies
         run: |
           cd frontend
           npm ci
+
+      - name: Lint, formatting and dependency audit
+        working-directory: frontend
+        run: |
+          npm run lint
+          npm run format:check
+          npm audit
 
       - name: Build Vite Application
         run: |
@@ -80,7 +105,7 @@ jobs:
           python-version: "3.11"
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
       - name: Start fresh stack
         run: |
           python scripts/configure-docker.py
@@ -93,13 +118,12 @@ jobs:
           npm run test:e2e
       - name: Verify artifact persistence after container replacement
         run: |
-          pip install httpx
+          pip install --require-hashes -r backend/requirements-test.txt
           python scripts/verify-p0-stack.py before --env-file .env.docker --url http://localhost:5173/api
           docker compose --env-file .env.docker up -d --no-deps --force-recreate backend --wait
           python scripts/verify-p0-stack.py after --env-file .env.docker --url http://localhost:5173/api
       - name: Verify trained ML examples and recorded drift
         run: |
-          pip install scikit-learn
           python scripts/run-ml-examples.py --env-file .env.docker --url http://localhost:5173/api
       - name: Stop verification stack
         if: always()

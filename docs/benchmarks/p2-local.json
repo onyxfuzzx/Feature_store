@@ -1,0 +1,86 @@
+{
+  "recorded_at": "2026-11-25T10:49:24.663619+00:00",
+  "environment": {
+    "platform": "Linux-6.18.58.1-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+    "processor": "",
+    "logical_cpu_count": 12,
+    "python": "3.11.18",
+    "packages": {
+      "fastapi": "0.165.0",
+      "sqlalchemy": "2.1.9",
+      "psycopg2-binary": "2.9.13",
+      "redis": "8.2.0"
+    }
+  },
+  "scope": "TestClient in-process HTTP; real PostgreSQL/Redis over Docker network. No external HTTP/TLS latency or production SLO.",
+  "dataset": {
+    "offline_rows": 100000,
+    "online_rows": 5000,
+    "features": 5,
+    "entities": 1000,
+    "events_per_entity_feature": 20,
+    "jobs": 100,
+    "job_runs": 1000,
+    "materialization_rows": 10000,
+    "chunk_size": 1000
+  },
+  "historical_100x5_sql": {
+    "samples": 100,
+    "p50_ms": 3.944,
+    "p95_ms": 6.962,
+    "p99_ms": 8.401,
+    "requests_per_second": 222.39
+  },
+  "historical_previous_lookup_reference": {
+    "samples": 20,
+    "p50_ms": 411.16,
+    "p95_ms": 1060.665,
+    "p99_ms": 1060.665,
+    "requests_per_second": 1.81
+  },
+  "query_counts": {
+    "historical_batch": 1,
+    "historical_previous_reference": 500,
+    "jobs_overview_100": 2
+  },
+  "online_20x5_warm_http": {
+    "samples": 100,
+    "p50_ms": 13.561,
+    "p95_ms": 17.558,
+    "p99_ms": 18.041,
+    "requests_per_second": 74.27
+  },
+  "offline_100x5_http": {
+    "samples": 100,
+    "p50_ms": 17.958,
+    "p95_ms": 27.842,
+    "p99_ms": 34.027,
+    "requests_per_second": 52.38
+  },
+  "concurrent_8_workers": {
+    "read": {
+      "samples": 160,
+      "p50_ms": 156.819,
+      "p95_ms": 237.874,
+      "p99_ms": 252.809,
+      "requests_per_second": 37.72
+    },
+    "write": {
+      "samples": 40,
+      "p50_ms": 184.34,
+      "p95_ms": 243.74,
+      "p99_ms": 243.817,
+      "requests_per_second": 9.43
+    },
+    "errors": 0
+  },
+  "materialization_10000": {
+    "samples": 5,
+    "p50_ms": 9629.298,
+    "p95_ms": 10427.591,
+    "p99_ms": 10427.591,
+    "requests_per_second": 0.11,
+    "python_traced_peak_bytes": 5065327,
+    "post_commit_queue_entries": 0
+  }
+}

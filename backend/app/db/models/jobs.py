@@ -1,10 +1,9 @@
 import uuid
 
+from app.db.base_class import Base
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
-
-from app.db.base_class import Base
 
 
 class JobDefinition(Base):
@@ -22,7 +21,10 @@ class JobDefinition(Base):
 
 class JobRun(Base):
     __tablename__ = "job_run"
-    __table_args__ = (UniqueConstraint("job_definition_id", "scheduled_for", name="uq_job_scheduled_slot"), {"schema": "jobs"})
+    __table_args__ = (
+        UniqueConstraint("job_definition_id", "scheduled_for", name="uq_job_scheduled_slot"),
+        {"schema": "jobs"},
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_definition_id = Column(

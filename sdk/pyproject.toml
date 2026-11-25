@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools==84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -10,9 +10,9 @@ authors = [
 ]
 description = "Official Python SDK & CLI for Feature Store and Model Registry"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = [
-    "httpx>=0.24.0",
+    "httpx>=0.28.1,<0.29",
 ]
 
 [project.scripts]

@@ -1,7 +1,8 @@
 """
 Feature Store & Model Registry Python SDK
 """
-from featurestore.client import FeatureStoreClient
+
+from featurestore.client import FeatureStoreClient, FeatureStoreError
 
 __version__ = "0.1.0"
-__all__ = ["FeatureStoreClient"]
+__all__ = ["FeatureStoreClient", "FeatureStoreError"]

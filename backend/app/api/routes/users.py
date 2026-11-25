@@ -1,14 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-
-from app.api.deps import get_user_roles, require_roles, get_current_user
+from app.api.deps import get_current_user, get_user_roles, require_roles
+from app.api.pagination import page, page_limit, page_offset
 from app.core import roles
 from app.core.security import hash_password
-from app.db.models.core import Role, User, UserRole, AuditLog
+from app.db.models.core import AuditLog, Role, User, UserRole
 from app.db.session import get_db
-from app.schemas.users import UserCreate, UserOut
 from app.schemas.audit import AuditLogOut
+from app.schemas.users import UserCreate, UserOut
 from app.services.audit import log_audit
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -18,8 +18,24 @@ router = APIRouter(prefix="/users", tags=["users"])
     response_model=list[UserOut],
     dependencies=[Depends(require_roles(roles.ADMIN))],
 )
-def list_users(db: Session = Depends(get_db)):
-    users = db.query(User).order_by(User.created_at.desc()).all()
+def list_users(
+    response: Response,
+    limit: int = page_limit(),
+    offset: int = page_offset(),
+    db: Session = Depends(get_db),
+):
+    users = page(
+        db.query(User).order_by(User.created_at.desc(), User.id.desc()), response, limit, offset
+    )
+    grouped = {user.id: [] for user in users}
+    if users:
+        for user_id, role in (
+            db.query(UserRole.user_id, Role.name)
+            .join(Role, Role.id == UserRole.role_id)
+            .filter(UserRole.user_id.in_(grouped))
+            .all()
+        ):
+            grouped[user_id].append(role)
     results = []
     for user in users:
         results.append(
@@ -28,7 +44,7 @@ def list_users(db: Session = Depends(get_db)):
                 name=user.name,
                 email=user.email,
                 is_active=user.is_active,
-                roles=get_user_roles(db, user.id),
+                roles=grouped[user.id],
                 created_at=user.created_at,
             )
         )
@@ -51,7 +67,11 @@ def create_user(
         raise HTTPException(status_code=409, detail="Email already exists")
 
     role_rows = db.query(Role).filter(Role.name.in_(payload.roles)).all()
-    if not payload.roles or len(payload.roles) != len(set(payload.roles)) or len(role_rows) != len(payload.roles):
+    if (
+        not payload.roles
+        or len(payload.roles) != len(set(payload.roles))
+        or len(role_rows) != len(payload.roles)
+    ):
         raise HTTPException(400, "Invalid role name")
     user = User(
         name=payload.name,
@@ -92,6 +112,15 @@ def create_user(
     response_model=list[AuditLogOut],
     dependencies=[Depends(require_roles(roles.ADMIN))],
 )
-def list_audit_logs(db: Session = Depends(get_db)):
-    return db.query(AuditLog).order_by(AuditLog.created_at.desc()).limit(200).all()
-
+def list_audit_logs(
+    response: Response,
+    limit: int = page_limit(),
+    offset: int = page_offset(),
+    db: Session = Depends(get_db),
+):
+    return page(
+        db.query(AuditLog).order_by(AuditLog.created_at.desc(), AuditLog.id.desc()),
+        response,
+        limit,
+        offset,
+    )

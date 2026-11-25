@@ -1,15 +1,27 @@
 import uuid
 
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from app.db.base_class import Base
+from sqlalchemy import (
+    BigInteger,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
-
-from app.db.base_class import Base
 
 
 class FeatureGroup(Base):
     __tablename__ = "feature_group"
-    __table_args__ = (UniqueConstraint("environment", "name", name="uq_feature_group_scope"), {"schema": "feature_store"})
+    __table_args__ = (
+        UniqueConstraint("environment", "name", name="uq_feature_group_scope"),
+        {"schema": "feature_store"},
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(120), nullable=False)
@@ -22,7 +34,10 @@ class FeatureGroup(Base):
 
 class FeatureDefinition(Base):
     __tablename__ = "feature_definition"
-    __table_args__ = (UniqueConstraint("group_id", "name", name="uq_feature_definition_scope"), {"schema": "feature_store"})
+    __table_args__ = (
+        UniqueConstraint("group_id", "name", name="uq_feature_definition_scope"),
+        {"schema": "feature_store"},
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     online_revision = Column(BigInteger, nullable=False, server_default=text("0"))

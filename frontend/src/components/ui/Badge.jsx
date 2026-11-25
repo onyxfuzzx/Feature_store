@@ -1,5 +1,3 @@
-import React from "react";
-
 export function Badge({ children, variant = "default", className = "" }) {
   const styles = {
     default: "bg-zinc-800/70 text-zinc-300 border-zinc-700/60",
@@ -12,9 +10,12 @@ export function Badge({ children, variant = "default", className = "" }) {
 
   let resolvedVariant = variant;
   const str = String(children).toLowerCase();
-  if (str === "active" || str === "success" || str === "production") resolvedVariant = "success";
-  else if (str === "running" || str === "staging" || str === "moderate_drift") resolvedVariant = "warning";
-  else if (str === "failed" || str === "error" || str === "danger") resolvedVariant = "danger";
+  if (str === "active" || str === "success" || str === "production")
+    resolvedVariant = "success";
+  else if (str === "running" || str === "staging" || str === "moderate_drift")
+    resolvedVariant = "warning";
+  else if (str === "failed" || str === "error" || str === "danger")
+    resolvedVariant = "danger";
   else if (str === "draft" || str === "archived") resolvedVariant = "default";
 
   return (

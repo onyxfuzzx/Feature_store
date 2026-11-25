@@ -7,6 +7,7 @@ def test_root_endpoint(client):
 
 def test_auth_login_success(client):
     from app.core.config import settings
+
     res = client.post(
         "/auth/login",
         json={"email": settings.admin_email, "password": settings.admin_password},
@@ -65,13 +66,14 @@ def test_batch_online_feature_serving(client, auth_headers):
 
 
 def test_as_of_offline_join(client, auth_headers):
-    from datetime import datetime
+    from datetime import UTC, datetime
+
     res = client.post(
         "/features/offline/as-of-join",
         headers=auth_headers,
         json={
             "observations": [
-                {"entity_key": "cust_001", "event_time": datetime.utcnow().isoformat()},
+                {"entity_key": "cust_001", "event_time": datetime.now(UTC).isoformat()},
             ],
             "features": ["customer_30d_spend"],
         },

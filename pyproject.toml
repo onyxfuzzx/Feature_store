@@ -1,0 +1,12 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = [".cache", ".venv", "frontend", "dist", "build"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"backend/tests/conftest.py" = ["E402"] # Set isolated DB configuration before importing the application.
+"examples/*.py" = ["E402"] # Add the checkout SDK path before importing it.
+"scripts/*.py" = ["E402"] # Configure benchmark/test isolation before importing the application.

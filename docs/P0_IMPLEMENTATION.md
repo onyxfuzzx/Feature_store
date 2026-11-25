@@ -2,7 +2,7 @@
 
 ## Fresh local installation
 
-Use Docker Compose with Python 3.10+ available for the configuration helper:
+Use Docker Compose with Python 3.11+ available for the configuration helper:
 
 ```powershell
 python scripts/configure-docker.py
@@ -29,13 +29,13 @@ Reader checks fail closed on elevated roles, memberships, or access to sensitive
 
 `validation_rules_json` accepts only `allow_null`, `required_type`, `min_value`, and `max_value`. Rules must be a JSON object; bounds must be finite and ordered. Supported types are float/number/double, int/integer, string/str, and bool/boolean. The declared feature type is enforced when `required_type` is absent. Non-finite numbers and failed numeric conversions are rejected.
 
-The policy is **reject the entire batch**. Streaming ingestion validates every row before writing. Materialization validates the bounded source result, then updates offline and online values in one transaction. Any failure rolls back the values; the failed materialization record is then committed separately. Scheduled jobs propagate that failure. Offline writes are idempotent for an identical entity/feature/event timestamp. Newer online event timestamps take precedence over late arrivals.
+The policy is **reject the entire batch**. Streaming ingestion validates every row before writing. Materialization streams and validates source chunks, updating offline and online values in one transaction. Any failure rolls back the values; the failed materialization record is then committed separately. Scheduled jobs propagate that failure. Offline writes are idempotent for an identical entity/feature/event timestamp. Newer online event timestamps take precedence over late arrivals.
 
 ## Redis consistency
 
 PostgreSQL stores `FeatureDefinition.online_revision`. Every online write/refresh advances this revision in the transaction updating values. Cache keys use `fs:v2:{feature_id}:{revision}:{entity_key}` and JSON-encoded values, preserving null, empty string, and zero.
 
-Redis publication runs only after successful PostgreSQL commit. Rollbacks discard queued publications. Cache misses, expiry, and outages read PostgreSQL. If a publication fails, reads cannot reach the previous revision's stale cached value. Replacing a feature's entire materialization also advances the revision, invalidating removed entities. Connections are reused, and a temporary Redis outage does not permanently disable later cache attempts. Expired generations are removed by the configured cache TTL.
+Streaming Redis publication runs only after successful PostgreSQL commit. Materialization advances the revision once and warms cache entries on subsequent reads, keeping its publication queue bounded. Rollbacks discard queued publications. Cache misses, expiry, and outages read PostgreSQL. If a publication fails, reads cannot reach the previous revision's stale cached value. Replacing a feature's entire materialization also advances the revision, invalidating removed entities. Connections are reused, and a temporary Redis outage does not permanently disable later cache attempts. Expired generations are removed by the configured cache TTL.
 
 ## Registered model runtime
 
@@ -90,10 +90,12 @@ For production, terminate HTTPS at your ingress/reverse proxy and forward the si
 
 ```powershell
 docker compose -p featureops-p0-test -f docker-compose.test.yml up -d --wait
-python -m pip install -r backend/requirements-test.txt
+python -m pip install -r backend/requirements-test.in
 python -m pytest backend/tests -q
 ```
 
 Use the backend virtual environment if dependencies are installed there. Tests explicitly ignore the configured application database. `TEST_DATABASE_URL` can override the disposable test database but must end in `_test`; test fixtures truncate application data in that database. `TEST_REDIS_URL` overrides the disposable Redis connection. CI provisions both services and runs migrations/fixtures automatically.
 
 Browser tests target a disposable local Compose stack. Set `P0_ENV_FILE` to the private Docker env file (resolved from `frontend/`) and `P0_BASE_URL` to the site's local URL; the default verification stack uses `.cache/p0-stack.env` and port 5188. Then run `npm ci`, `npx playwright install chromium`, and `npm run test:e2e` in `frontend/`. They create fixtures, sign in, promote a model, reload its history, exercise registered inference, and verify same-origin ingestion/SQL-denial behavior.
+
+For hash-locked Linux validation, runtime versions, lint/format checks and SDK package validation, follow [contributing](../CONTRIBUTING.md). The PowerShell host command above uses the platform-resolved input requirements.

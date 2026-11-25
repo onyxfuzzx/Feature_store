@@ -1,11 +1,11 @@
-from datetime import datetime
-from uuid import UUID
-from typing import Literal
 import json
-from pydantic import Field, field_validator
-from apscheduler.triggers.cron import CronTrigger
+from datetime import datetime
+from typing import Literal
+from uuid import UUID
 
 from app.schemas.common import ORMBase
+from apscheduler.triggers.cron import CronTrigger
+from pydantic import Field, field_validator
 
 
 class JobDefinitionCreate(ORMBase):
@@ -52,4 +52,3 @@ class JobRunOut(ORMBase):
 
 class JobOverviewItem(JobDefinitionOut):
     recent_runs: list[JobRunOut] = []
-
