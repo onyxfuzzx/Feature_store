@@ -163,7 +163,7 @@ To run this application, make sure you have installed:
 
 ## Quickstart Setup Guide
 
-For the current Docker bootstrap, restricted source-query setup, registered model format, and P0 verification commands, follow [P0 implementation and operation](docs/P0_IMPLEMENTATION.md). Broader correctness and release work remains. Docker now runs migrations and creates the initial administrator before starting the API.
+For the current Docker bootstrap, restricted source-query setup, registered model format, and P0 verification commands, follow [P0 implementation and operation](docs/P0_IMPLEMENTATION.md). P1 correctness workflows are described in [the P1 guide](docs/P1_IMPLEMENTATION.md); performance and release hardening remain. Docker now runs migrations and creates the initial administrator before starting the API.
 
 ### 1. Supabase Database Setup
 

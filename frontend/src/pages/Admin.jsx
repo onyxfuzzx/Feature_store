@@ -12,6 +12,7 @@ export default function Admin() {
   const [apiKeys, setApiKeys] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   // User creation modal
   const [showUserModal, setShowUserModal] = useState(false);
@@ -30,6 +31,7 @@ export default function Admin() {
   const loadData = async () => {
     try {
       setLoading(true);
+      setError(null);
       if (tab === "users") {
         const u = await fetchApi("/users");
         setUsers(u);
@@ -41,7 +43,7 @@ export default function Admin() {
         setAuditLogs(a);
       }
     } catch (err) {
-      console.error(err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -63,7 +65,7 @@ export default function Admin() {
       setUserForm({ name: "", email: "", password: "", roles: ["analyst"] });
       await loadData();
     } catch (err) {
-      alert(err.message);
+      setError(err.message);
     } finally {
       setSubmittingUser(false);
     }
@@ -77,24 +79,25 @@ export default function Admin() {
         method: "POST",
         body: JSON.stringify({ name: keyName }),
       });
-      setCreatedKey(res.api_key);
+      setCreatedKey(res.plain_key);
       setKeyName("");
       await loadData();
     } catch (err) {
-      alert(err.message);
+      setError(err.message);
     } finally {
       setSubmittingKey(false);
     }
   };
 
-  const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text);
+  const copyToClipboard = async (text) => {
+    try { await navigator.clipboard.writeText(text); } catch (err) { setError(err.message); return; }
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      {error && <div role="alert" className="text-rose-300">{error} <Button onClick={loadData}>Retry</Button></div>}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-zinc-800/80">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-100">Administration</h1>
@@ -213,6 +216,7 @@ export default function Admin() {
                     </td>
                     <td className="py-3 px-4 font-mono text-zinc-400">
                       {k.created_at ? k.created_at.slice(0, 10) : "N/A"}
+                      <Button size="sm" onClick={async () => { try { await fetchApi(`/api-keys/${k.id}`, { method: "DELETE" }); await loadData(); } catch (err) { setError(err.message); } }}>Revoke</Button>
                     </td>
                   </tr>
                 ))
@@ -263,9 +267,10 @@ export default function Admin() {
       {/* Modal: New User */}
       <Modal isOpen={showUserModal} title="Create User Account" onClose={() => setShowUserModal(false)}>
         <form onSubmit={handleCreateUser} className="space-y-4 text-xs">
+          {error && <p role="alert" className="text-rose-300">{error}</p>}
           <div>
-            <label className="block font-medium text-zinc-300 mb-1">Full Name</label>
-            <input
+            <label className="block font-medium text-zinc-300 mb-1" htmlFor="admin-field-1">Full Name</label>
+            <input id="admin-field-1"
               type="text"
               required
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
@@ -275,8 +280,8 @@ export default function Admin() {
             />
           </div>
           <div>
-            <label className="block font-medium text-zinc-300 mb-1">Email</label>
-            <input
+            <label className="block font-medium text-zinc-300 mb-1" htmlFor="admin-field-2">Email</label>
+            <input id="admin-field-2"
               type="email"
               required
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
@@ -286,8 +291,8 @@ export default function Admin() {
             />
           </div>
           <div>
-            <label className="block font-medium text-zinc-300 mb-1">Password</label>
-            <input
+            <label className="block font-medium text-zinc-300 mb-1" htmlFor="admin-field-3">Password</label>
+            <input id="admin-field-3"
               type="password"
               required
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
@@ -297,8 +302,8 @@ export default function Admin() {
             />
           </div>
           <div>
-            <label className="block font-medium text-zinc-300 mb-1">Role Assignment</label>
-            <select
+            <label className="block font-medium text-zinc-300 mb-1" htmlFor="admin-field-4">Role Assignment</label>
+            <select id="admin-field-4"
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
               value={userForm.roles[0]}
               onChange={(e) => setUserForm({ ...userForm, roles: [e.target.value] })}
@@ -324,6 +329,7 @@ export default function Admin() {
       <Modal isOpen={showKeyModal} title="Generate API Key" onClose={() => setShowKeyModal(false)}>
         {createdKey ? (
           <div className="space-y-4 text-xs">
+          {error && <p role="alert" className="text-rose-300">{error}</p>}
             <div className="p-3 bg-emerald-950/40 border border-emerald-800/60 rounded-lg text-emerald-300">
               <span className="font-semibold block mb-1">API Key Generated Successfully</span>
               <p className="text-[11px] text-zinc-400">
@@ -345,9 +351,10 @@ export default function Admin() {
           </div>
         ) : (
           <form onSubmit={handleCreateKey} className="space-y-4 text-xs">
+          {error && <p role="alert" className="text-rose-300">{error}</p>}
             <div>
-              <label className="block font-medium text-zinc-300 mb-1">Descriptive Key Name</label>
-              <input
+              <label className="block font-medium text-zinc-300 mb-1" htmlFor="admin-field-5">Descriptive Key Name</label>
+              <input id="admin-field-5"
                 type="text"
                 required
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"

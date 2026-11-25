@@ -10,6 +10,7 @@ import { Cpu, Plus, ArrowRight, Activity, Calendar } from "lucide-react";
 export default function ModelRegistry() {
   const [models, setModels] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ name: "", description: "", environment: "dev" });
   const [submitting, setSubmitting] = useState(false);
@@ -20,10 +21,11 @@ export default function ModelRegistry() {
   const loadModels = async () => {
     try {
       setLoading(true);
+      setError(null);
       const data = await fetchApi("/models");
       setModels(data);
     } catch (err) {
-      console.error(err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -45,7 +47,7 @@ export default function ModelRegistry() {
       setForm({ name: "", description: "", environment: "dev" });
       await loadModels();
     } catch (err) {
-      alert(err.message);
+      setError(err.message);
     } finally {
       setSubmitting(false);
     }
@@ -53,6 +55,7 @@ export default function ModelRegistry() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      {error && <div role="alert" className="text-rose-300">{error} <Button onClick={loadModels}>Retry</Button></div>}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-zinc-800/80">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-100">Model Registry</h1>
@@ -111,9 +114,10 @@ export default function ModelRegistry() {
       {/* Modal: Register Model */}
       <Modal isOpen={showModal} title="Register New Model" onClose={() => setShowModal(false)}>
         <form onSubmit={handleCreate} className="space-y-4 text-xs">
+          {error && <p role="alert" className="text-rose-300">{error}</p>}
           <div>
-            <label className="block font-medium text-zinc-300 mb-1">Model Name</label>
-            <input
+            <label className="block font-medium text-zinc-300 mb-1" htmlFor="modelregistry-field-1">Model Name</label>
+            <input id="modelregistry-field-1"
               type="text"
               required
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
@@ -123,8 +127,8 @@ export default function ModelRegistry() {
             />
           </div>
           <div>
-            <label className="block font-medium text-zinc-300 mb-1">Description</label>
-            <input
+            <label className="block font-medium text-zinc-300 mb-1" htmlFor="modelregistry-field-2">Description</label>
+            <input id="modelregistry-field-2"
               type="text"
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
               placeholder="Model goal and prediction target"
@@ -133,8 +137,8 @@ export default function ModelRegistry() {
             />
           </div>
           <div>
-            <label className="block font-medium text-zinc-300 mb-1">Environment</label>
-            <select
+            <label className="block font-medium text-zinc-300 mb-1" htmlFor="modelregistry-field-3">Environment</label>
+            <select id="modelregistry-field-3"
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
               value={form.environment}
               onChange={(e) => setForm({ ...form, environment: e.target.value })}

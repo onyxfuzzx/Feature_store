@@ -8,6 +8,7 @@ from app.api.deps import require_roles, get_current_user
 from app.core import roles
 from app.db.models.core import User
 from app.db.models.jobs import JobDefinition, JobRun
+from app.db.models.feature_store import FeatureDefinition
 from app.db.session import get_db
 from app.jobs.scheduler import _run_job, schedule_job
 from app.schemas.jobs import JobDefinitionCreate, JobDefinitionOut, JobOverviewItem, JobRunOut
@@ -63,6 +64,8 @@ def get_jobs_overview(db: Session = Depends(get_db)):
     dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER))],
 )
 def create_job(payload: JobDefinitionCreate, db: Session = Depends(get_db)):
+    if not db.get(FeatureDefinition, UUID(json.loads(payload.payload_json)["feature_id"])):
+        raise HTTPException(422, "Job feature does not exist")
     job = JobDefinition(
         name=payload.name,
         type=payload.type,
@@ -95,15 +98,10 @@ def run_job(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    _run_job(job.id)
-    run = (
-        db.query(JobRun)
-        .filter(JobRun.job_definition_id == job.id)
-        .order_by(JobRun.started_at.desc())
-        .first()
-    )
-    if not run:
-        raise HTTPException(status_code=500, detail="Job run not recorded")
+    run_id = _run_job(job.id)
+    if run_id is None:
+        raise HTTPException(409, "Job is already running; another worker owns its execution lock")
+    run = db.get(JobRun, run_id)
 
     log_audit(
         db=db,
@@ -133,3 +131,19 @@ def list_job_runs(job_id: UUID, db: Session = Depends(get_db)):
         .order_by(JobRun.started_at.desc())
         .all()
     )
+
+
+@router.put("/{job_id}", response_model=JobDefinitionOut,
+            dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER))])
+def update_job(job_id: UUID, payload: JobDefinitionCreate, db: Session = Depends(get_db)):
+    job = db.get(JobDefinition, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if not db.get(FeatureDefinition, UUID(json.loads(payload.payload_json)["feature_id"])):
+        raise HTTPException(422, "Job feature does not exist")
+    for key, value in payload.model_dump().items():
+        setattr(job, key, value)
+    db.commit()
+    db.refresh(job)
+    schedule_job(job)
+    return job

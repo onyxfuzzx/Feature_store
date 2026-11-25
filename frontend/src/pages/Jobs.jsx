@@ -9,7 +9,9 @@ import { Clock, Play, Plus, RefreshCw, AlertCircle, CheckCircle2 } from "lucide-
 export default function Jobs() {
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [showModal, setShowModal] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [runningJobId, setRunningJobId] = useState(null);
   const [form, setForm] = useState({
     name: "",
@@ -26,11 +28,12 @@ export default function Jobs() {
   const loadJobs = async () => {
     try {
       setLoading(true);
+      setError(null);
       // Single aggregated request — zero N+1 waterfalls!
       const data = await fetchApi("/jobs/overview");
       setJobs(data);
     } catch (err) {
-      console.error(err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -46,7 +49,7 @@ export default function Jobs() {
       await fetchApi(`/jobs/${jobId}/run`, { method: "POST" });
       await loadJobs();
     } catch (err) {
-      alert("Failed to trigger job: " + err.message);
+      setError(err.message);
     } finally {
       setRunningJobId(null);
     }
@@ -56,8 +59,8 @@ export default function Jobs() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await fetchApi("/jobs", {
-        method: "POST",
+      await fetchApi(editingId ? `/jobs/${editingId}` : "/jobs", {
+        method: editingId ? "PUT" : "POST",
         body: JSON.stringify(form),
       });
       setShowModal(false);
@@ -70,7 +73,7 @@ export default function Jobs() {
       });
       await loadJobs();
     } catch (err) {
-      alert(err.message);
+      setError(err.message);
     } finally {
       setSubmitting(false);
     }
@@ -78,6 +81,7 @@ export default function Jobs() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      {error && <div role="alert" className="text-rose-300">{error} <Button onClick={loadJobs}>Retry</Button></div>}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-zinc-800/80">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-100">Scheduler & Jobs</h1>
@@ -90,7 +94,7 @@ export default function Jobs() {
             <RefreshCw className="w-4 h-4" /> Refresh
           </Button>
           {canTrigger && (
-            <Button variant="primary" onClick={() => setShowModal(true)}>
+            <Button variant="primary" onClick={() => { setEditingId(null); setForm({ name: "", type: "feature_materialization", cron: "0 * * * *", payload_json: '{"feature_id":""}', is_active: true }); setShowModal(true); }}>
               <Plus className="w-4 h-4" /> Create Schedule
             </Button>
           )}
@@ -116,12 +120,16 @@ export default function Jobs() {
                   <div className="flex items-center gap-4 text-xs font-mono text-zinc-400">
                     <span className="flex items-center gap-1">
                       <Clock className="w-3.5 h-3.5 text-zinc-500" />
-                      Cron: <code className="bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-200">{job.cron}</code>
+                      Cron (UTC): <code className="bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-200">{job.cron}</code>
                     </span>
                     <span>Type: {job.type}</span>
                   </div>
                 </div>
 
+                {canTrigger && <div className="flex gap-2">
+                  <Button onClick={() => { setEditingId(job.id); setForm({ name: job.name, type: job.type, cron: job.cron, payload_json: job.payload_json, is_active: job.is_active }); setShowModal(true); }}>Edit Schedule</Button>
+                  <Button onClick={async () => { try { await fetchApi(`/jobs/${job.id}`, { method: "PUT", body: JSON.stringify({ ...job, is_active: !job.is_active }) }); await loadJobs(); } catch (err) { setError(err.message); } }}>{job.is_active ? "Pause" : "Resume"}</Button>
+                </div>}
                 {canTrigger && (
                   <Button
                     variant="secondary"
@@ -150,6 +158,7 @@ export default function Jobs() {
                           {r.started_at ? r.started_at.slice(11, 19) : "N/A"}
                         </span>
                         <Badge variant={r.status === "success" ? "success" : "danger"}>{r.status}</Badge>
+                        {r.log && <span role="status" className="text-rose-300">{r.log}</span>}
                       </div>
                     ))}
                   </div>
@@ -161,11 +170,12 @@ export default function Jobs() {
       )}
 
       {/* Modal: Create Job */}
-      <Modal isOpen={showModal} title="Create Scheduled Job" onClose={() => setShowModal(false)}>
+      <Modal isOpen={showModal} title={editingId ? "Edit Scheduled Job" : "Create Scheduled Job"} onClose={() => setShowModal(false)}>
         <form onSubmit={handleCreate} className="space-y-4 text-xs">
+          {error && <p role="alert" className="text-rose-300">{error}</p>}
           <div>
-            <label className="block font-medium text-zinc-300 mb-1">Job Name</label>
-            <input
+            <label className="block font-medium text-zinc-300 mb-1" htmlFor="jobs-field-1">Job Name</label>
+            <input id="jobs-field-1"
               type="text"
               required
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
@@ -175,8 +185,8 @@ export default function Jobs() {
             />
           </div>
           <div>
-            <label className="block font-medium text-zinc-300 mb-1">Cron Expression</label>
-            <input
+            <label className="block font-medium text-zinc-300 mb-1" htmlFor="jobs-field-2">Cron Expression (UTC)</label>
+            <input id="jobs-field-2"
               type="text"
               required
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 font-mono focus:outline-none focus:border-zinc-700"
@@ -186,8 +196,8 @@ export default function Jobs() {
             />
           </div>
           <div>
-            <label className="block font-medium text-zinc-300 mb-1">Payload (JSON)</label>
-            <textarea
+            <label className="block font-medium text-zinc-300 mb-1" htmlFor="jobs-field-3">Payload (JSON)</label>
+            <textarea id="jobs-field-3"
               rows={2}
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-700"
               value={form.payload_json}
@@ -199,7 +209,7 @@ export default function Jobs() {
               Cancel
             </Button>
             <Button type="submit" variant="primary" loading={submitting}>
-              Create Job
+              {editingId ? "Save Schedule" : "Create Job"}
             </Button>
           </div>
         </form>

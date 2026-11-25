@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func
@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import require_roles
 from app.core import roles
-from app.db.models.feature_store import FeatureDefinition, FeatureMaterialization
+from app.db.models.feature_store import FeatureDefinition, FeatureMaterialization, FeatureValueOnline
 from app.db.models.model_registry import Model, ModelStageHistory, ModelVersion
 from app.db.session import get_db
 from app.schemas.dashboard import DashboardSummary, DashboardStat, MaterializationItem, PromotionItem
@@ -40,18 +40,25 @@ def summary(db: Session = Depends(get_db)):
     else:
         last_materialization_value = "Never"
 
-    # Compute actual freshness SLA: ratio of successful runs in the last 20 runs
-    recent_20_runs = db.query(FeatureMaterialization).order_by(FeatureMaterialization.started_at.desc()).limit(20).all()
-    if recent_20_runs:
-        success_count = sum(1 for r in recent_20_runs if r.status == "success")
-        freshness_pct = f"{int((success_count / len(recent_20_runs)) * 100)}%"
-        freshness_note = f"{success_count}/{len(recent_20_runs)} runs passed"
-    else:
-        freshness_pct = "100%"
-        freshness_note = "Standby"
+    # Serving freshness is the latest event time versus the feature's declared cadence.
+    active = db.query(FeatureDefinition).filter(FeatureDefinition.status == "active").all()
+    latest_events = dict(db.query(FeatureValueOnline.feature_id, func.max(FeatureValueOnline.event_time))
+                         .group_by(FeatureValueOnline.feature_id).all())
+    seconds = {"streaming": 300, "hourly": 3600, "daily": 86400, "weekly": 604800}
+    known = [feature for feature in active if feature.refresh_interval in seconds]
+    fresh = 0
+    now = datetime.now(timezone.utc)
+    for feature in known:
+        event_time = latest_events.get(feature.id)
+        if event_time:
+            event_time = event_time.replace(tzinfo=timezone.utc) if event_time.tzinfo is None else event_time
+            age = (now - event_time).total_seconds()
+            fresh += 0 <= age <= seconds[feature.refresh_interval]
+    freshness_pct = f"{round(100 * fresh / len(known))}%" if known else "N/A"
+    freshness_note = f"{fresh}/{len(known)} active features within event-age policy; {len(active) - len(known)} unknown cadence"
 
     stats = [
-        DashboardStat(label="Active Features", value=str(feature_count), note="Registered features"),
+        DashboardStat(label="Active Features", value=str(len(active)), note="Active definitions"),
         DashboardStat(label="Models in Registry", value=str(model_count), note="All lifecycle stages"),
         DashboardStat(
             label="Last Materialization",

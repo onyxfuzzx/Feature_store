@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_roles, get_current_user
@@ -17,7 +16,6 @@ from app.db.models.feature_store import (
     FeatureValueOnline,
     FeatureValueOffline,
 )
-from app.db.models.model_registry import Model, ModelVersion, ModelLineage
 from app.db.session import get_db
 from app.schemas.feature_store import (
     FeatureDefinitionCreate,
@@ -28,7 +26,6 @@ from app.schemas.feature_store import (
     FeatureMaterializationOut,
     FeatureLineageCreate,
     FeatureLineageOut,
-    FeatureValueOut,
     BatchOnlineFeaturesRequest,
     BatchOnlineFeaturesResponse,
     AsOfJoinRequest,
@@ -38,14 +35,13 @@ from app.schemas.feature_store import (
     QueryDryRunRequest,
     QueryDryRunResponse,
     LineageGraphOut,
-    LineageNode,
-    LineageEdge,
 )
 from app.services.materialization import materialize_feature, write_offline_values
 from app.services.validation import parse_rules, validate_value
 from app.services.source_queries import execute_source_query
 from app.services.audit import log_audit
 from app.services.online_store import get_online_store
+from app.services.feature_refs import resolve_feature, resolve_features
 
 
 router = APIRouter(prefix="/features", tags=["features"])
@@ -345,45 +341,15 @@ def get_batch_online_features(
 ):
     start_time = time.perf_counter()
 
-    resolved_features: dict[str, FeatureDefinition] = {}
-    for feat_ref in payload.features:
-        feat = None
-        try:
-            feat = db.get(FeatureDefinition, UUID(feat_ref))
-        except (ValueError, AttributeError):
-            pass
-
-        if not feat:
-            if ":" in feat_ref:
-                grp_name, f_name = feat_ref.split(":", 1)
-                feat = (
-                    db.query(FeatureDefinition)
-                    .join(FeatureGroup, FeatureGroup.id == FeatureDefinition.group_id)
-                    .filter(FeatureGroup.name == grp_name, FeatureDefinition.name == f_name)
-                    .first()
-                )
-            else:
-                feat = db.query(FeatureDefinition).filter(FeatureDefinition.name == feat_ref).first()
-
-        if feat:
-            resolved_features[feat_ref] = feat
-
-    feature_id_map = {feat.id: feat.name for feat in resolved_features.values()}
+    resolved_features, feature_id_map = resolve_features(db, payload.features, payload.environment)
     store = get_online_store()
-    raw_results = store.get_online_features(payload.entity_keys, feature_id_map, db)
-
-    # Align with payload requested aliases/references
-    values_result: dict[str, dict[str, str | None]] = {}
-    for ek in payload.entity_keys:
-        values_result[ek] = {}
-        for feat_ref, feat in resolved_features.items():
-            values_result[ek][feat.name] = raw_results.get(ek, {}).get(feat.name, None)
+    values_result = store.get_online_features(payload.entity_keys, feature_id_map, db)
 
     latency_ms = round((time.perf_counter() - start_time) * 1000, 3)
 
     return BatchOnlineFeaturesResponse(
         entity_keys=payload.entity_keys,
-        features=[f.name for f in resolved_features.values()],
+        features=list(feature_id_map.values()),
         values=values_result,
         read_latency_ms=latency_ms,
     )
@@ -405,17 +371,7 @@ def compute_as_of_join(
     """
     start_time = time.perf_counter()
 
-    resolved_features = []
-    for feat_ref in payload.features:
-        feat = None
-        try:
-            feat = db.get(FeatureDefinition, UUID(feat_ref))
-        except (ValueError, AttributeError):
-            pass
-        if not feat:
-            feat = db.query(FeatureDefinition).filter(FeatureDefinition.name == feat_ref).first()
-        if feat:
-            resolved_features.append(feat)
+    resolved_features, feature_id_map = resolve_features(db, payload.features, payload.environment)
 
     joined_rows = []
     for obs in payload.observations:
@@ -434,7 +390,7 @@ def compute_as_of_join(
                 .order_by(FeatureValueOffline.event_time.desc())
                 .first()
             )
-            row_dict[feat.name] = latest_val[0] if latest_val else None
+            row_dict[feature_id_map[feat.id]] = latest_val[0] if latest_val else None
 
         joined_rows.append(row_dict)
 
@@ -463,15 +419,7 @@ def stream_ingest(
     now = datetime.now(timezone.utc)
     records = []
     for record in payload.records:
-        if record.feature_id:
-            feat = db.get(FeatureDefinition, record.feature_id)
-        else:
-            candidates = db.query(FeatureDefinition).filter(FeatureDefinition.name == record.feature_name).all()
-            if len(candidates) > 1:
-                raise HTTPException(422, "Ambiguous feature name; use feature_id")
-            feat = candidates[0] if candidates else None
-        if not feat:
-            raise HTTPException(422, "Unknown feature reference")
+        feat = resolve_feature(db, record.feature_id or record.feature_name, payload.environment)
         errors = validate_value(record.value, parse_rules(feat.validation_rules_json), feat.dtype)
         if errors:
             raise HTTPException(422, f"Validation rejected {record.entity_key}: {', '.join(errors)}")
@@ -480,12 +428,12 @@ def stream_ingest(
     try:
         if payload.persist_offline:
             write_offline_values(db, records)
-        get_online_store().write_online_features(records, db)
+        online_updated_count = get_online_store().write_online_features(records, db)
         db.commit()
     except Exception:
         db.rollback()
         raise
-    return StreamIngestResponse(ingested_count=len(records), success=True, timestamp=now)
+    return StreamIngestResponse(ingested_count=len(records), online_updated_count=online_updated_count, success=True, timestamp=now)
 
 
 @router.post(
@@ -522,86 +470,5 @@ def get_feature_lineage_graph(
     feature_id: UUID,
     db: Session = Depends(get_db),
 ):
-    """
-    Returns the visual DAG dependency graph for a feature:
-    Upstream tables -> Feature Group -> Feature -> Downstream Models -> Serving Endpoints.
-    """
-    feature = db.get(FeatureDefinition, feature_id)
-    if not feature:
-        raise HTTPException(status_code=404, detail="Feature not found")
-
-    group = db.get(FeatureGroup, feature.group_id)
-    nodes: list[LineageNode] = []
-    edges: list[LineageEdge] = []
-
-    # 1. Feature Node
-    feat_node_id = f"feat:{feature.id}"
-    nodes.append(LineageNode(
-        id=feat_node_id,
-        label=feature.name,
-        type="feature",
-        metadata={"dtype": feature.dtype, "status": feature.status, "interval": feature.refresh_interval}
-    ))
-
-    # 2. Group Node
-    if group:
-        grp_node_id = f"grp:{group.id}"
-        nodes.append(LineageNode(
-            id=grp_node_id,
-            label=group.name,
-            type="feature_group",
-            metadata={"environment": group.environment}
-        ))
-        edges.append(LineageEdge(source=grp_node_id, target=feat_node_id, label="contains"))
-
-    # 3. Source Tables
-    lineages = db.query(FeatureLineage).filter(FeatureLineage.feature_id == feature_id).all()
-    source_tables = {l.source_table for l in lineages} if lineages else set()
-    if not source_tables:
-        source_tables.add("feature_store.raw_events")
-
-    for tbl in source_tables:
-        src_id = f"source:{tbl}"
-        nodes.append(LineageNode(
-            id=src_id,
-            label=tbl,
-            type="source_table",
-            metadata={"storage": "PostgreSQL"}
-        ))
-        edges.append(LineageEdge(source=src_id, target=feat_node_id, label="transforms"))
-
-    # 4. Downstream Models
-    all_ml = db.query(ModelLineage).all()
-    consumed_version_ids = []
-    for ml in all_ml:
-        if ml.feature_ids_json and (str(feature_id) in ml.feature_ids_json or feature.name in ml.feature_ids_json):
-            consumed_version_ids.append(ml.model_version_id)
-
-    if consumed_version_ids:
-        versions = db.query(ModelVersion).filter(ModelVersion.id.in_(consumed_version_ids)).all()
-        for v in versions:
-            m = db.get(Model, v.model_id)
-            model_name = m.name if m else "ML Model"
-            m_node_id = f"model:{v.id}"
-            nodes.append(LineageNode(
-                id=m_node_id,
-                label=f"{model_name} (v{v.version})",
-                type="model",
-                metadata={"stage": v.stage}
-            ))
-            edges.append(LineageEdge(source=feat_node_id, target=m_node_id, label="feeds"))
-
-            if v.stage == "Production":
-                ep_node_id = f"endpoint:{v.id}"
-                nodes.append(LineageNode(
-                    id=ep_node_id,
-                    label=f"POST /predict ({model_name})",
-                    type="endpoint",
-                    metadata={"target": "Live Inference"}
-                ))
-                edges.append(LineageEdge(source=m_node_id, target=ep_node_id, label="serves"))
-
-    return LineageGraphOut(nodes=nodes, edges=edges)
-
-
-
+    from app.services.lineage import graph
+    return graph(db, feature_id=feature_id)

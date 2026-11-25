@@ -40,8 +40,7 @@ def create_api_key(
         is_active=True,
     )
     db.add(db_key)
-    db.commit()
-    db.refresh(db_key)
+    db.flush()
 
     log_audit(
         db=db,
@@ -50,8 +49,11 @@ def create_api_key(
         entity_type="api_key",
         entity_id=db_key.id,
         payload={"name": db_key.name},
+        commit=False,
     )
 
+    db.commit()
+    db.refresh(db_key)
     return APIKeyCreateOut(
         id=db_key.id,
         user_id=db_key.user_id,
@@ -75,7 +77,6 @@ def revoke_api_key(
         raise HTTPException(status_code=404, detail="API key not found")
 
     db_key.is_active = False
-    db.commit()
 
     log_audit(
         db=db,
@@ -84,5 +85,7 @@ def revoke_api_key(
         entity_type="api_key",
         entity_id=db_key.id,
         payload={"name": db_key.name},
+        commit=False,
     )
+    db.commit()
     return None

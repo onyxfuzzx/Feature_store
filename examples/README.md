@@ -26,3 +26,16 @@ pip install scikit-learn
 # Run the end-to-end pipeline
 python examples/01_churn_prediction_e2e.py
 ```
+
+
+## Current executable workflow
+
+Both examples require real credentials (`ADMIN_EMAIL`, `ADMIN_PASSWORD`) and `FEATURE_STORE_URL` (Docker default `http://localhost:5173/api`). Install `backend/requirements-test.txt` for scikit-learn/httpx. The churn script creates independent features/model/version, verifies historical boundaries and trained predictions, and stores actual drift evidence. It does not reuse an unrelated model or substitute simulated weights. The registered-model example verifies the supported JSON linear/logistic serving format.
+
+Run both from the repository root with private Docker credentials:
+
+```powershell
+python scripts/run-ml-examples.py --env-file .env.docker --url http://localhost:5173/api
+```
+
+See [P1 workflow details](../docs/P1_IMPLEMENTATION.md) for model input contracts, recorded drift and UTC windows.

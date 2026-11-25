@@ -115,9 +115,10 @@ def test_model_drift_calculation(client, auth_headers):
     body = drift_res.json()
     assert "metrics" in body
     assert "thresholds" in body
+    assert body["status"] == "baseline_missing"
     for m in body["metrics"]:
-        assert "psi" in m["history"][0]
-        assert "current_psi" in m
+        assert m["history"] == []
+        assert m["current_psi"] is None
 
 
 def test_jobs_overview(client, auth_headers):

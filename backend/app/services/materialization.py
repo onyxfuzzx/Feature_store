@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
+from fastapi import HTTPException
 
 from app.core.config import settings
 from app.db.models.feature_store import FeatureDefinition, FeatureMaterialization, FeatureValueOffline
@@ -13,10 +14,14 @@ from app.services.validation import parse_rules, validate_value
 def write_offline_values(db, records):
     for row in records:
         statement = insert(FeatureValueOffline).values(**row)
-        db.execute(statement.on_conflict_do_update(
+        inserted = db.execute(statement.on_conflict_do_nothing(
             index_elements=["entity_key", "feature_id", "event_time"],
-            set_={"value": statement.excluded.value, "updated_at": statement.excluded.updated_at},
-        ))
+        ).returning(FeatureValueOffline.entity_key)).first()
+        if not inserted:
+            existing = db.query(FeatureValueOffline).filter_by(entity_key=row["entity_key"],
+                feature_id=row["feature_id"], event_time=row["event_time"]).one()
+            if existing.value != row["value"]:
+                raise HTTPException(409, "Conflicting replay: an event timestamp already has a different value")
 
 
 def materialize_feature(db: Session, feature_id) -> FeatureMaterialization:

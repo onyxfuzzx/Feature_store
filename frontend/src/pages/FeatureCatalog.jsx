@@ -198,9 +198,10 @@ export default function FeatureCatalog() {
       </div>
 
       {error && (
-        <div className="p-4 rounded-xl bg-rose-950/40 border border-rose-800/50 text-rose-300 text-sm flex items-center gap-2">
+        <div role="alert" className="p-4 rounded-xl bg-rose-950/40 border border-rose-800/50 text-rose-300 text-sm flex items-center gap-2">
           <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
           <span>{error}</span>
+          <Button onClick={loadData}>Retry</Button>
         </div>
       )}
 
@@ -299,8 +300,8 @@ export default function FeatureCatalog() {
       <Modal isOpen={showGroupModal} title="Create Feature Group" onClose={() => setShowGroupModal(false)}>
         <form onSubmit={handleCreateGroup} className="space-y-4 text-xs">
           <div>
-            <label className="block font-medium text-zinc-300 mb-1">Group Name</label>
-            <input
+            <label className="block font-medium text-zinc-300 mb-1" htmlFor="featurecatalog-field-1">Group Name</label>
+            <input id="featurecatalog-field-1"
               type="text"
               required
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
@@ -310,8 +311,8 @@ export default function FeatureCatalog() {
             />
           </div>
           <div>
-            <label className="block font-medium text-zinc-300 mb-1">Description</label>
-            <input
+            <label className="block font-medium text-zinc-300 mb-1" htmlFor="featurecatalog-field-2">Description</label>
+            <input id="featurecatalog-field-2"
               type="text"
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
               placeholder="Feature group purpose"
@@ -320,8 +321,8 @@ export default function FeatureCatalog() {
             />
           </div>
           <div>
-            <label className="block font-medium text-zinc-300 mb-1">Environment</label>
-            <select
+            <label className="block font-medium text-zinc-300 mb-1" htmlFor="featurecatalog-field-3">Environment</label>
+            <select id="featurecatalog-field-3"
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
               value={groupForm.environment}
               onChange={(e) => setGroupForm({ ...groupForm, environment: e.target.value })}
@@ -347,8 +348,8 @@ export default function FeatureCatalog() {
         <form onSubmit={handleCreateFeature} className="space-y-4 text-xs">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block font-medium text-zinc-300 mb-1">Feature Group</label>
-              <select
+              <label className="block font-medium text-zinc-300 mb-1" htmlFor="featurecatalog-field-4">Feature Group</label>
+              <select id="featurecatalog-field-4"
                 required
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
                 value={featureForm.group_id}
@@ -362,8 +363,8 @@ export default function FeatureCatalog() {
               </select>
             </div>
             <div>
-              <label className="block font-medium text-zinc-300 mb-1">Feature Name</label>
-              <input
+              <label className="block font-medium text-zinc-300 mb-1" htmlFor="featurecatalog-field-5">Feature Name</label>
+              <input id="featurecatalog-field-5"
                 type="text"
                 required
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
@@ -376,8 +377,8 @@ export default function FeatureCatalog() {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block font-medium text-zinc-300 mb-1">Data Type</label>
-              <select
+              <label className="block font-medium text-zinc-300 mb-1" htmlFor="featurecatalog-field-6">Data Type</label>
+              <select id="featurecatalog-field-6"
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
                 value={featureForm.dtype}
                 onChange={(e) => setFeatureForm({ ...featureForm, dtype: e.target.value })}
@@ -389,8 +390,8 @@ export default function FeatureCatalog() {
               </select>
             </div>
             <div>
-              <label className="block font-medium text-zinc-300 mb-1">Refresh Cadence</label>
-              <select
+              <label className="block font-medium text-zinc-300 mb-1" htmlFor="featurecatalog-field-7">Refresh Cadence</label>
+              <select id="featurecatalog-field-7"
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
                 value={featureForm.refresh_interval}
                 onChange={(e) => setFeatureForm({ ...featureForm, refresh_interval: e.target.value })}
@@ -404,7 +405,7 @@ export default function FeatureCatalog() {
 
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="block font-medium text-zinc-300">SQL Transformation</label>
+              <label htmlFor="feature-source-sql" className="block font-medium text-zinc-300">SQL Transformation</label>
               <button
                 type="button"
                 onClick={handleDryRun}
@@ -414,7 +415,7 @@ export default function FeatureCatalog() {
                 {dryRunning ? "Testing SQL..." : "Test Query (Dry Run)"}
               </button>
             </div>
-            <textarea
+            <textarea id="feature-source-sql"
               required
               rows={3}
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 font-mono text-[11px] focus:outline-none focus:border-zinc-700"
@@ -455,7 +456,7 @@ export default function FeatureCatalog() {
                     )}
                   </div>
                 ) : (
-                  <div className="text-rose-400 text-[11px]">
+                  <div role="alert" className="text-rose-400 text-[11px]">
                     ✕ Error: {dryRunResult.error}
                   </div>
                 )}
@@ -468,8 +469,8 @@ export default function FeatureCatalog() {
             <span className="text-[11px] font-semibold text-zinc-300 font-mono uppercase">Validation Rules</span>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-[10px] text-zinc-400 mb-1">Min Value</label>
-                <input
+                <label className="block text-[10px] text-zinc-400 mb-1" htmlFor="featurecatalog-field-8">Min Value</label>
+                <input id="featurecatalog-field-8"
                   type="number"
                   step="any"
                   className="w-full bg-zinc-900 border border-zinc-800 rounded p-1.5 text-zinc-100 text-xs"
@@ -479,8 +480,8 @@ export default function FeatureCatalog() {
                 />
               </div>
               <div>
-                <label className="block text-[10px] text-zinc-400 mb-1">Max Value</label>
-                <input
+                <label className="block text-[10px] text-zinc-400 mb-1" htmlFor="featurecatalog-field-9">Max Value</label>
+                <input id="featurecatalog-field-9"
                   type="number"
                   step="any"
                   className="w-full bg-zinc-900 border border-zinc-800 rounded p-1.5 text-zinc-100 text-xs"

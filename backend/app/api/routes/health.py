@@ -2,6 +2,8 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import text
 from app.db.session import engine
 from app.services.source_queries import execute_source_query
+from app.services.online_store import get_online_store
+from tempfile import TemporaryFile
 
 from app.core.config import settings
 
@@ -21,6 +23,15 @@ def readiness():
             connection.execute(text("SELECT id FROM core.users LIMIT 1"))
         execute_source_query("SELECT 1 AS ready", 1)
         settings.artifact_storage_dir.mkdir(parents=True, exist_ok=True)
-        return {"status": "ready", "cache": settings.online_store_backend}
+        with TemporaryFile(dir=settings.artifact_storage_dir):
+            pass
+        cache = "postgres"
+        if settings.online_store_backend == "redis":
+            try:
+                get_online_store()._client.ping()
+                cache = "redis"
+            except Exception:
+                cache = "postgres_fallback"
+        return {"status": "ready", "cache": cache, "checks": {"database": "ready", "source_reader": "ready", "artifacts": "ready"}}
     except Exception as exc:
         raise HTTPException(503, "Database, migrations, or source reader are not ready") from exc

@@ -97,6 +97,10 @@ jobs:
           python scripts/verify-p0-stack.py before --env-file .env.docker --url http://localhost:5173/api
           docker compose --env-file .env.docker up -d --no-deps --force-recreate backend --wait
           python scripts/verify-p0-stack.py after --env-file .env.docker --url http://localhost:5173/api
+      - name: Verify trained ML examples and recorded drift
+        run: |
+          pip install scikit-learn
+          python scripts/run-ml-examples.py --env-file .env.docker --url http://localhost:5173/api
       - name: Stop verification stack
         if: always()
         run: docker compose --env-file .env.docker down -v

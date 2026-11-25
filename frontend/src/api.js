@@ -6,13 +6,14 @@ export function getAuthToken() {
 
 export function getActiveUser() {
   const user = localStorage.getItem("active_user");
-  return user ? JSON.parse(user) : null;
+  try { return user ? JSON.parse(user) : null; } catch { localStorage.removeItem("active_user"); return null; }
 }
 
 export async function fetchApi(endpoint, options = {}) {
+  const { responseType, ...requestOptions } = options;
   const token = getAuthToken();
   const headers = {
-    "Content-Type": "application/json",
+    ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
     ...(options.headers || {}),
   };
 
@@ -21,7 +22,7 @@ export async function fetchApi(endpoint, options = {}) {
   }
 
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
+    ...requestOptions,
     headers,
   });
 
@@ -34,7 +35,8 @@ export async function fetchApi(endpoint, options = {}) {
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || "Something went wrong");
+    const detail = errorData.detail;
+    throw new Error(Array.isArray(detail) ? detail.map((item) => item.msg).join("; ") : detail || `Request failed (${response.status})`);
   }
 
   // Handle cases where response has no body (e.g. 204 No Content or empty)
@@ -42,7 +44,7 @@ export async function fetchApi(endpoint, options = {}) {
     return null;
   }
 
-  return response.json();
+  return responseType === "blob" ? response.blob() : response.json();
 }
 
 export async function loginApi(email, password) {

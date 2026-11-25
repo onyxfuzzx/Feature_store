@@ -1,15 +1,16 @@
 from datetime import datetime
 from uuid import UUID
-from pydantic import field_validator
+from pydantic import Field, field_validator
+from typing import Literal
 
 from app.schemas.common import ORMBase
 
 
 class ModelCreate(ORMBase):
-    name: str
+    name: str = Field(min_length=1, max_length=120)
     description: str | None = None
     owner_id: UUID | None = None
-    environment: str = "dev"
+    environment: str = Field(default="dev", min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
 
 
 class ModelOut(ORMBase):
@@ -22,8 +23,8 @@ class ModelOut(ORMBase):
 
 
 class ModelVersionCreate(ORMBase):
-    version: str
-    stage: str = "Staging"
+    version: str = Field(min_length=1, max_length=40)
+    stage: Literal["Staging", "Production", "Archived"] = "Staging"
     metrics_json: str | None = None
     params_json: str | None = None
     artifact_uri: str | None = None
@@ -75,7 +76,7 @@ class ModelVersionDetailOut(ModelVersionOut):
 
 
 class ModelHydrateRequest(ORMBase):
-    entity_keys: list[str]
+    entity_keys: list[str] = Field(min_length=1, max_length=1000)
     version: str | None = None  # None = active Production / latest version
 
 
@@ -88,7 +89,7 @@ class ModelHydrateResponse(ORMBase):
 
 
 class ModelPredictRequest(ORMBase):
-    entity_key: str
+    entity_key: str = Field(min_length=1, max_length=120)
     version: str | None = None
     runtime_features: dict[str, str | float] = {}
 

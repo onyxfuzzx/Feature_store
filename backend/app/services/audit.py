@@ -9,7 +9,8 @@ def log_audit(
     action: str,
     entity_type: str,
     entity_id: str,
-    payload: dict | None = None
+    payload: dict | None = None,
+    commit: bool = True,
 ) -> AuditLog:
     """
     Utility to record actions to core.audit_log for RBAC and audit compliance.
@@ -22,6 +23,7 @@ def log_audit(
         payload_json=json.dumps(payload) if payload else None
     )
     db.add(log)
-    db.commit()
-    db.refresh(log)
+    if commit:
+        db.commit()
+        db.refresh(log)
     return log

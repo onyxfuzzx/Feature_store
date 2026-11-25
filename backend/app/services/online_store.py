@@ -7,6 +7,7 @@ from functools import lru_cache
 from sqlalchemy import delete, event, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
+from fastapi import HTTPException
 
 from app.core.config import settings
 from app.db.models.feature_store import FeatureDefinition, FeatureValueOnline
@@ -47,10 +48,17 @@ class PostgresOnlineStore:
                 index_elements=["entity_key", "feature_id"],
                 set_={key: getattr(stmt.excluded, key) for key in ("value", "event_time", "updated_at")},
                 where=(FeatureValueOnline.event_time.is_(None) |
-                       (stmt.excluded.event_time >= FeatureValueOnline.event_time)),
+                       (stmt.excluded.event_time > FeatureValueOnline.event_time)),
             ).returning(FeatureValueOnline.entity_key)
             if db.execute(stmt).first():
                 accepted.append(row)
+            else:
+                existing = db.query(FeatureValueOnline).filter_by(entity_key=row["entity_key"], feature_id=row["feature_id"]).one()
+                event_time = row["event_time"]
+                if event_time.tzinfo is None:
+                    event_time = event_time.replace(tzinfo=timezone.utc)
+                if existing.event_time == event_time and existing.value != row["value"]:
+                    raise HTTPException(409, "Conflicting online replay at the same event timestamp")
         # Publish only after a successful commit; rollback discards this queue.
         db.info.setdefault("online_publications", []).append((self, accepted, revisions))
         return len(accepted)

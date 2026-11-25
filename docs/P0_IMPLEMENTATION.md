@@ -72,7 +72,7 @@ $env:ADMIN_EMAIL = 'admin@featureops.local'
 python examples/02_registered_logistic_model.py
 ```
 
-It creates its own feature/model/version, trains a classifier, uploads learned coefficients, promotes it, and checks the served probability against scikit-learn. The older churn tutorial awaits the separate P1 repair.
+It creates its own feature/model/version, trains a classifier, uploads learned coefficients, promotes it, and checks the served probability against scikit-learn. The churn tutorial now completes training, registered inference and recorded drift; see [the P1 guide](P1_IMPLEMENTATION.md).
 
 ## Artifact storage boundary
 
@@ -84,7 +84,7 @@ The default frontend uses relative `/api` URLs. Vite proxies them in development
 
 For production, terminate HTTPS at your ingress/reverse proxy and forward the site to the frontend service. Keep `VITE_API_URL=/api`, set `APP_ENV=production`, and list the exact public HTTPS origin in `CORS_ORIGINS`. Production rejects missing reader configuration, predictable JWT secrets, placeholder administrator credentials, and wildcard/non-HTTPS CORS settings. Generate JWT secrets with at least 32 random characters and administrator passwords with at least 12 characters. TLS certificates and public DNS are deployment-specific and are not automatically provisioned by this local Compose stack.
 
-`/health` is liveness; `/ready` checks migrated application tables and restricted source-query execution. Redis outages remain serviceable through PostgreSQL fallback. The default deployment runs one scheduler-owning API process; distributed scheduler coordination remains P1 work.
+`/health` is liveness; `/ready` checks migrated application tables and restricted source-query execution. Redis outages remain serviceable through PostgreSQL fallback. The default deployment runs one API process; P1 adds database execution locks and scheduled-slot deduplication for multiple workers.
 
 ## Verification
 

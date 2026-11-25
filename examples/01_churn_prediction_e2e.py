@@ -1,175 +1,90 @@
+"""Reproducible feature history -> training -> registered inference -> measured drift.
+
+Install backend/requirements-test.txt and sdk/; configure FEATURE_STORE_URL,
+ADMIN_EMAIL and ADMIN_PASSWORD. Defaults to the Docker same-origin API.
+Creates an independent group/model each run; never overwrites an existing model.
 """
-End-to-End Churn Prediction Machine Learning Pipeline
-=====================================================
-
-This tutorial demonstrates the complete A-to-Z workflow of using the
-Feature Store & Model Registry for an enterprise ML production workflow:
-
-1. Connect and Authenticate via Python SDK
-2. Ingest Real-Time & Streaming Feature Events
-3. Point-in-Time Correct (As-Of) Offline Dataset Generation
-4. Model Training & Validation with Scikit-Learn
-5. Model Versioning & Artifact Upload
-6. Automated Real-Time Online Feature Hydration & Inference
-7. Population Stability Index (PSI) Drift Monitoring
-
-To run:
-    pip install scikit-learn
-    python examples/01_churn_prediction_e2e.py
-"""
-
+import json
 import os
-import pickle
+from pathlib import Path
 import sys
-import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
-# Ensure SDK is importable
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "sdk")))
-
+import httpx
+from sklearn.linear_model import LogisticRegression
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "sdk"))
 from featurestore import FeatureStoreClient
 
 
 def main():
-    print("=" * 70)
-    print("  Feature Store & Model Registry: End-to-End ML Pipeline")
-    print("=" * 70)
-
-    # 1. Initialize Client
-    api_url = os.environ.get("FEATURE_STORE_URL", "http://localhost:8000")
-    print(f"\n[1/7] Connecting to Feature Store at {api_url}...")
-    client = FeatureStoreClient(api_url=api_url)
-
-    # Authenticate
-    admin_email = os.environ.get("ADMIN_EMAIL", "admin@featureops.local")
-    admin_password = os.environ.get("ADMIN_PASSWORD", "ChangeMe123!")
-    client.login(admin_email, admin_password)
-    print("  ✓ Authenticated as Administrator.")
-
-    # 2. Ingest Streaming Event Data
-    print("\n[2/7] Streaming Real-Time Features into Online Store...")
-    sample_entities = [f"user_{i:04d}" for i in range(1, 11)]
-    stream_records = []
-    now = datetime.utcnow()
-
-    for i, entity_key in enumerate(sample_entities):
-        stream_records.extend([
-            {
-                "entity_key": entity_key,
-                "feature_name": "customer_30d_spend",
-                "value": str(round(50.0 + i * 42.5, 2)),
-                "event_time": (now - timedelta(days=i % 5)).isoformat(),
-            },
-            {
-                "entity_key": entity_key,
-                "feature_name": "transaction_count",
-                "value": str(5 + (i * 3)),
-                "event_time": (now - timedelta(days=i % 5)).isoformat(),
-            },
-        ])
-
-    ingest_res = client.stream_ingest(records=stream_records, persist_offline=True)
-    print(f"  ✓ Stream ingested {ingest_res['ingested_count']} records into online & offline tiers.")
-
-    # 3. Generate Point-in-Time Correct Offline Training Dataset
-    print("\n[3/7] Generating Point-in-Time Correct (As-Of) Training Dataset...")
-    observations = [
-        {"entity_key": f"user_{i:04d}", "event_time": (now - timedelta(days=i)).isoformat()}
-        for i in range(1, 8)
-    ]
-    historical = client.get_historical_features(
-        observations=observations,
-        features=["customer_30d_spend", "transaction_count"],
-    )
-    print(f"  ✓ Generated {historical['row_count']} leakage-free training rows in {historical['computation_time_ms']}ms:")
-    for row in historical["joined_rows"][:3]:
-        print(f"    - Entity: {row.get('entity_key')} | 30d Spend: ${row.get('customer_30d_spend')} | Txns: {row.get('transaction_count')}")
-
-    # 4. Train Scikit-Learn Model
-    print("\n[4/7] Training Predictive Churn Model...")
-    try:
-        from sklearn.linear_model import LogisticRegression
-        import numpy as np
-
-        # Prepare simple dataset from joined rows
-        X = []
-        y = []
-        for i, row in enumerate(historical["joined_rows"]):
-            spend = float(row.get("customer_30d_spend") or 100.0)
-            txns = float(row.get("transaction_count") or 10.0)
-            X.append([spend, txns])
-            # Higher txns & spend -> lower churn probability
-            y.append(1 if (spend < 150.0 or txns < 10) else 0)
-
-        clf = LogisticRegression()
-        clf.fit(X, y)
-        train_acc = clf.score(X, y)
-        print(f"  ✓ Trained LogisticRegression classifier (Training Accuracy: {train_acc * 100:.1f}%)")
-
-        # Serialize model weights to temporary artifact
-        with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tmp_file:
-            pickle.dump(clf, tmp_file)
-            artifact_path = tmp_file.name
-
-        has_trained_model = True
-    except ImportError:
-        print("  ! scikit-learn not installed. Skipping local fitting; using simulated weights artifact.")
-        with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp_file:
-            tmp_file.write(b"SIMULATED_MODEL_WEIGHTS_V1")
-            artifact_path = tmp_file.name
-        has_trained_model = False
-
-    # 5. Model Registry: Versioning & Artifact Upload
-    print("\n[5/7] Uploading Model Weights Artifact to Registry...")
-    models = client.list_models()
-    if models:
-        model_id = str(models[0]["id"])
-        # Fetch versions for model
-        import httpx
-        headers = client._headers()
-        v_res = httpx.get(f"{api_url}/models/{model_id}/versions", headers=headers)
-        if v_res.status_code == 200 and v_res.json():
-            version_id = str(v_res.json()[0]["id"])
-            up_res = client.upload_artifact(model_id=model_id, version_id=version_id, file_path=artifact_path)
-            print(f"  ✓ Registered artifact: {up_res['filename']} ({up_res['size_bytes']} bytes)")
-    
-    if os.path.exists(artifact_path):
-        os.remove(artifact_path)
-
-    # 6. Real-Time Online Feature Hydration & Low-Latency Scoring
-    print("\n[6/7] Online Feature Hydration & Real-Time Inference...")
-    test_entity = "user_0001"
-    
-    # Method A: Direct Online Batch Lookup
-    online_feats = client.get_online_features(
-        entity_keys=[test_entity],
-        features=["customer_30d_spend", "transaction_count"],
-    )
-    print(f"  ✓ Fetched online features for {test_entity} in {online_feats['read_latency_ms']}ms:")
-    print(f"    {online_feats['values'].get(test_entity)}")
-
-    # Method B: Full Inference Proxy (Auto-Hydration + Scored Prediction)
-    if models:
-        pred_res = client.predict(
-            model_id=model_id,
-            entity_key=test_entity,
-            runtime_features={"device_is_mobile": 1, "session_page_views": 12},
-        )
-        pred = pred_res["prediction"]
-        print(f"  ✓ Real-Time Prediction for {test_entity} (Latency: {pred_res['latency_ms']}ms):")
-        print(f"    - Score / Probability : {pred.get('probability')}")
-        print(f"    - Classification Label: {pred.get('label')}")
-        print(f"    - Model Version Used  : {pred_res.get('version')}")
-
-    # 7. Lineage & Drift Observability
-    print("\n[7/7] Verifying Lineage Graph & Drift Monitoring...")
-    if models:
-        lin_res = client.get_model_lineage(model_id=model_id)
-        print(f"  ✓ Verified Model Lineage DAG: {len(lin_res['nodes'])} nodes, {len(lin_res['edges'])} edges.")
-
-    print("\n" + "=" * 70)
-    print("  ✓ Complete A-to-Z Pipeline Executed Successfully!")
-    print("=" * 70)
+    url = os.environ.get("FEATURE_STORE_URL", "http://localhost:5173/api").rstrip("/")
+    now = datetime.now(timezone.utc)
+    event_time = now - timedelta(days=2)
+    observation_time = now - timedelta(days=1)
+    suffix = uuid4().hex[:10]
+    with httpx.Client(timeout=30) as session:
+        sdk = FeatureStoreClient(api_url=url, session=session)
+        sdk.login(os.environ.get("ADMIN_EMAIL", "admin@featureops.local"), os.environ["ADMIN_PASSWORD"])
+        def post(path, payload):
+            response = session.post(url + path, json=payload, headers=sdk._headers())
+            response.raise_for_status()
+            return response.json()
+        group = post("/features/groups", {"name": f"Churn tutorial {suffix}", "environment": "dev"})
+        features = []
+        for name in ("spend", "transactions"):
+            feature = post("/features", {"group_id": group["id"], "name": f"{name}_{suffix}", "dtype": "float",
+                "source_sql": "SELECT 'unused' AS entity_key, 0 AS value WHERE false", "refresh_interval": "streaming",
+                "status": "active", "validation_rules_json": '{"allow_null":false,"min_value":0}'})
+            post(f"/features/{feature['id']}/lineage", {"source_table": "generated:churn_tutorial_events"})
+            features.append(feature)
+        entities = [f"churn_{suffix}_{i}" for i in range(40)]
+        original = [[50.0 + i * 30, 2.0 + i] for i in range(40)]
+        def records(matrix, timestamp):
+            return [{"entity_key": entity, "feature_id": feature["id"], "value": str(value), "event_time": timestamp.isoformat()}
+                    for entity, vector in zip(entities, matrix) for feature, value in zip(features, vector)]
+        sdk.stream_ingest(records(original, event_time))
+        observations = [{"entity_key": entity, "event_time": observation_time.isoformat()} for entity in entities]
+        historical = sdk.get_historical_features(observations, [feature["id"] for feature in features])
+        matrix = [[float(row[feature["name"]]) for feature in features] for row in historical["joined_rows"]]
+        if matrix != original:
+            raise AssertionError("Point-in-time training data differs from the ingested history")
+        targets = [int(vector[0] < 500) for vector in matrix]
+        training = [index for index in range(40) if index % 5]
+        held_out = [index for index in range(40) if not index % 5]
+        clf = LogisticRegression(max_iter=2000).fit([matrix[i] for i in training], [targets[i] for i in training])
+        accuracy = clf.score([matrix[i] for i in held_out], [targets[i] for i in held_out])
+        model = post("/models", {"name": f"Churn Predictor {suffix}", "environment": "dev"})
+        version = post(f"/models/{model['id']}/versions", {"version": "1", "metrics_json": json.dumps({"held_out_accuracy": accuracy})})
+        manifest = {"format": "featureops.linear.v1", "task": "binary_classification",
+            "inputs": [{"name": name, "feature_id": feature["id"], "dtype": "float"} for name, feature in zip(("spend", "transactions"), features)],
+            "coefficients": clf.coef_[0].tolist(), "intercept": float(clf.intercept_[0]), "classes": clf.classes_.tolist()}
+        response = session.post(f"{url}/models/{model['id']}/versions/{version['id']}/artifact", headers={"Authorization": f"Bearer {sdk.token}"},
+                                files={"file": ("churn.json", json.dumps(manifest).encode(), "application/json")})
+        response.raise_for_status()
+        post(f"/models/versions/{version['id']}/lineage", {"feature_ids_json": json.dumps([feature["id"] for feature in features]),
+                                                        "dataset_uri": f"generated://churn/{suffix}/training"})
+        post(f"/models/{model['id']}/versions/{version['id']}/drift-baseline", {
+            "window_start": (event_time - timedelta(seconds=1)).isoformat(), "window_end": observation_time.isoformat(),
+            "samples": {feature["id"]: [matrix[index][column] for index in training] for column, feature in enumerate(features)}})
+        post(f"/models/{model['id']}/versions/{version['id']}/stage", {"to_stage": "Production"})
+        current = [[vector[0] * 1.5 + 200, vector[1] + 5] for vector in original]
+        sdk.stream_ingest(records(current, now))
+        # Later online changes must not leak into the original training observations.
+        assert sdk.get_historical_features(observations, [feature["id"] for feature in features])["joined_rows"] == historical["joined_rows"]
+        expected = clf.predict_proba(current)[:, 1]
+        for entity, probability in zip(entities, expected):
+            actual = sdk.predict(model["id"], entity)["prediction"]["probability"]
+            if abs(actual - float(probability)) > 1e-9:
+                raise AssertionError("Registered prediction differs from trained classifier")
+        result = post(f"/models/{model['id']}/drift/runs", {"version": "1", "window_start": (now - timedelta(minutes=1)).isoformat(),
+            "window_end": (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat(), "min_samples": 20})
+        assert result["status"] == "measured" and len(result["metrics"]) == 2
+        assert all(metric["current_sample_count"] == 40 and metric["current_psi"] is not None for metric in result["metrics"])
+        lineage = sdk.get_model_lineage(model["id"])
+        assert any(edge["label"] == "trained_on" for edge in lineage["edges"])
+        print(f"Verified churn model {model['id']}: 40 historical rows, held-out accuracy={accuracy:.3f}, 40 matching predictions.")
+        print("Persisted PSI:", {metric["feature"]: metric["current_psi"] for metric in result["metrics"]})
 
 
 if __name__ == "__main__":

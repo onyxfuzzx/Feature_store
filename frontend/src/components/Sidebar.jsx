@@ -15,7 +15,7 @@ const navItems = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/features", label: "Feature Catalog", icon: Layers },
   { to: "/models", label: "Model Registry", icon: Cpu },
-  { to: "/jobs", label: "Scheduler & Jobs", icon: Clock },
+  { to: "/jobs", label: "Scheduler & Jobs", icon: Clock, roles: ["admin", "ml_engineer", "data_scientist"] },
   { to: "/admin", label: "Administration", icon: Shield, adminOnly: true },
 ];
 
@@ -48,7 +48,7 @@ export default function Sidebar() {
           Core Engine
         </div>
         {navItems
-          .filter((item) => !item.adminOnly || isAdmin)
+          .filter((item) => (!item.adminOnly || isAdmin) && (!item.roles || item.roles.some((role) => user?.roles?.includes(role))))
           .map((item) => {
             const Icon = item.icon;
             return (

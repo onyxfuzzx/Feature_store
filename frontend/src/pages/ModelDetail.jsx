@@ -6,6 +6,8 @@ import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { Modal } from "../components/ui/Modal";
 import LineageGraph from "../components/LineageGraph";
+import ModelDriftPanel from "../components/ModelDriftPanel";
+import ModelVersionAssets from "../components/ModelVersionAssets";
 import {
   Cpu,
   Plus,
@@ -52,9 +54,12 @@ export default function ModelDetail() {
   const [predictKey, setPredictKey] = useState("cust_001");
   const [predictResult, setPredictResult] = useState(null);
   const [predicting, setPredicting] = useState(false);
+  const [runtimeInput, setRuntimeInput] = useState("{}");
+  const [predictVersion, setPredictVersion] = useState("");
 
   const user = getActiveUser();
   const canEdit = user?.roles?.some((r) => ["admin", "ml_engineer"].includes(r));
+  const canRegister = user?.roles?.some((r) => ["admin", "ml_engineer", "data_scientist"].includes(r));
 
   const loadData = async () => {
     try {
@@ -95,12 +100,13 @@ export default function ModelDetail() {
         method: "POST",
         body: JSON.stringify({
           entity_key: predictKey,
-          runtime_features: {},
+          runtime_features: JSON.parse(runtimeInput),
+          version: predictVersion || undefined,
         }),
       });
       setPredictResult(res);
     } catch (err) {
-      alert("Inference failed: " + err.message);
+      setError(err.message);
     } finally {
       setPredicting(false);
     }
@@ -123,7 +129,7 @@ export default function ModelDetail() {
       await loadData();
       await showHistory(selectedVersion);
     } catch (err) {
-      alert(err.message);
+      setError(err.message);
     } finally {
       setPromoting(false);
     }
@@ -146,7 +152,7 @@ export default function ModelDetail() {
       });
       await loadData();
     } catch (err) {
-      alert(err.message);
+      setError(err.message);
     } finally {
       setSubmittingVersion(false);
     }
@@ -159,7 +165,7 @@ export default function ModelDetail() {
   if (!model) {
     return (
       <div className="py-20 text-center text-sm text-zinc-500">
-        Model not found. <Link to="/models" className="text-emerald-400">Back to Registry</Link>
+        <span role="alert">{error || "Model not found."}</span> <Button onClick={loadData}>Retry</Button> <Link to="/models" className="text-emerald-400">Back to Registry</Link>
       </div>
     );
   }
@@ -183,7 +189,7 @@ export default function ModelDetail() {
           <p className="text-sm text-zinc-400 mt-1">{model.description || "No description provided."}</p>
         </div>
 
-        {canEdit && (
+        {canRegister && (
           <Button variant="primary" onClick={() => setShowVersionModal(true)}>
             <Plus className="w-4 h-4" /> New Version
           </Button>
@@ -261,6 +267,7 @@ export default function ModelDetail() {
                       {v.created_at ? v.created_at.slice(0, 10) : "N/A"}
                     </td>
                     <td className="py-3 px-4 text-right">
+                      <ModelVersionAssets model={model} version={v} canEdit={canEdit} canLink={user?.roles?.some((role) => ["admin", "ml_engineer", "data_scientist"].includes(role))} onChanged={loadData} />
                       <Button variant="secondary" size="sm" onClick={() => showHistory(v)}>History</Button>
                       {canEdit && (
                         <Button
@@ -283,46 +290,7 @@ export default function ModelDetail() {
         </Card>
       )}
 
-      {/* Tab: Real PSI Drift Monitoring */}
-      {activeTab === "drift" && (
-        <div className="space-y-6">
-          <Card>
-            <CardHeader
-              title="Population Stability Index (PSI) Drift Analysis"
-              description="Evaluates distribution divergence between baseline training data and live inference features. PSI > 0.2 indicates significant drift."
-            />
-            {driftData && driftData.metrics && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                {driftData.metrics.map((m) => (
-                  <div key={m.feature} className="p-4 bg-zinc-950/80 border border-zinc-800 rounded-xl space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-xs text-zinc-200 font-semibold">{m.feature}</span>
-                      <Badge variant={m.drift_detected ? "danger" : m.current_psi > 0.1 ? "warning" : "success"}>
-                        {m.drift_detected ? "Significant Drift" : m.current_psi > 0.1 ? "Moderate" : "Stable"}
-                      </Badge>
-                    </div>
-
-                    <div className="flex items-baseline justify-between pt-2">
-                      <span className="text-[11px] text-zinc-400 font-mono">Current PSI Score</span>
-                      <span className="text-xl font-bold font-mono text-zinc-100">{m.current_psi}</span>
-                    </div>
-
-                    {/* Visual Bar Indicator */}
-                    <div className="w-full bg-zinc-900 h-2 rounded-full overflow-hidden border border-zinc-800">
-                      <div
-                        className={`h-full transition-all rounded-full ${
-                          m.current_psi > 0.2 ? "bg-rose-500" : m.current_psi > 0.1 ? "bg-amber-500" : "bg-emerald-500"
-                        }`}
-                        style={{ width: `${Math.min(100, (m.current_psi / 0.3) * 100)}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-        </div>
-      )}
+      {activeTab === "drift" && <ModelDriftPanel modelId={id} versions={versions} canMeasure={user?.roles?.some((role) => ["admin", "ml_engineer", "data_scientist"].includes(role))} />}
 
       {/* Tab: Lineage */}
       {activeTab === "lineage" && (
@@ -343,6 +311,10 @@ export default function ModelDetail() {
             description="Automated feature hydration from online store combined with real-time scoring."
           />
           <div className="space-y-4">
+            <label className="block text-xs">Inference version <select aria-label="Inference version" className="bg-zinc-900 p-2" value={predictVersion} onChange={(event) => setPredictVersion(event.target.value)}>
+              <option value="">Current Production</option>{versions.map((version) => <option key={version.id} value={version.version}>{version.version}</option>)}
+            </select></label>
+            <label className="block text-xs">Runtime features (JSON)<textarea aria-label="Runtime features (JSON)" className="block w-full bg-zinc-900 p-2 font-mono" value={runtimeInput} onChange={(event) => setRuntimeInput(event.target.value)} /></label>
             <div className="flex flex-col sm:flex-row items-center gap-3">
               <input
                 type="text"
@@ -373,7 +345,7 @@ export default function ModelDetail() {
                   <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
                     <span className="text-[10px] text-zinc-500 uppercase font-mono">Probability / Score</span>
                     <p className="text-lg font-bold font-mono text-indigo-400 mt-1">
-                      {predictResult.prediction?.probability}
+                      {predictResult.prediction?.probability ?? predictResult.prediction?.value}
                     </p>
                   </div>
                   <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800">
@@ -401,9 +373,10 @@ export default function ModelDetail() {
       {/* Modal: Promote Stage */}
       <Modal isOpen={showPromoteModal} title="Promote Model Stage" onClose={() => setShowPromoteModal(false)}>
         <form onSubmit={handlePromote} className="space-y-4 text-xs">
+          {error && <p role="alert" className="text-rose-300">{error}</p>}
           <div>
-            <label className="block font-medium text-zinc-300 mb-1">Target Stage</label>
-            <select
+            <label className="block font-medium text-zinc-300 mb-1" htmlFor="modeldetail-field-1">Target Stage</label>
+            <select id="modeldetail-field-1"
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
               value={promoteStage}
               onChange={(e) => setPromoteStage(e.target.value)}
@@ -427,10 +400,11 @@ export default function ModelDetail() {
       {/* Modal: New Version */}
       <Modal isOpen={showVersionModal} title="Register New Version" onClose={() => setShowVersionModal(false)}>
         <form onSubmit={handleCreateVersion} className="space-y-4 text-xs">
+          {error && <p role="alert" className="text-rose-300">{error}</p>}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block font-medium text-zinc-300 mb-1">Version String</label>
-              <input
+              <label className="block font-medium text-zinc-300 mb-1" htmlFor="modeldetail-field-2">Version String</label>
+              <input id="modeldetail-field-2"
                 type="text"
                 required
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
@@ -440,8 +414,8 @@ export default function ModelDetail() {
               />
             </div>
             <div>
-              <label className="block font-medium text-zinc-300 mb-1">Initial Stage</label>
-              <select
+              <label className="block font-medium text-zinc-300 mb-1" htmlFor="modeldetail-field-3">Initial Stage</label>
+              <select id="modeldetail-field-3"
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-zinc-700"
                 value={versionForm.stage}
                 onChange={(e) => setVersionForm({ ...versionForm, stage: e.target.value })}
@@ -452,8 +426,8 @@ export default function ModelDetail() {
             </div>
           </div>
           <div>
-            <label className="block font-medium text-zinc-300 mb-1">Metrics (JSON)</label>
-            <input
+            <label className="block font-medium text-zinc-300 mb-1" htmlFor="modeldetail-field-4">Metrics (JSON)</label>
+            <input id="modeldetail-field-4"
               type="text"
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 font-mono text-xs focus:outline-none focus:border-zinc-700"
               value={versionForm.metrics_json}

@@ -16,4 +16,7 @@ from app.db.models.model_registry import (  # noqa: E402,F401
     ModelLineage,
     ModelStageHistory,
     ModelVersion,
+    DriftBaseline,
+    InferenceObservation,
+    DriftRun,
 )

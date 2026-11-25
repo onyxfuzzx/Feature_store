@@ -61,7 +61,8 @@ CREATE TABLE IF NOT EXISTS feature_store.feature_group (
     owner_id    UUID REFERENCES core.users(id),
     tags_json   TEXT,
     environment VARCHAR(40) NOT NULL DEFAULT 'dev',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_feature_group_scope UNIQUE (environment, name)
 );
 
 -- feature_store.feature_definition
@@ -76,7 +77,8 @@ CREATE TABLE IF NOT EXISTS feature_store.feature_definition (
     status               VARCHAR(40) NOT NULL DEFAULT 'draft',
     validation_rules_json TEXT,
     online_revision      BIGINT NOT NULL DEFAULT 0,
-    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_feature_definition_scope UNIQUE (group_id, name)
 );
 
 -- feature_store.feature_lineage
@@ -145,7 +147,9 @@ CREATE TABLE IF NOT EXISTS model_registry.model_version (
     metrics_json TEXT,
     params_json  TEXT,
     artifact_uri VARCHAR(500),
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_model_version_identity UNIQUE (model_id, version),
+    CONSTRAINT ck_model_version_stage CHECK (stage IN ('Staging', 'Production', 'Archived'))
 );
 
 -- model_registry.model_lineage
@@ -185,7 +189,9 @@ CREATE TABLE IF NOT EXISTS jobs.job_run (
     status            VARCHAR(40) NOT NULL,
     started_at        TIMESTAMPTZ,
     finished_at       TIMESTAMPTZ,
-    log               TEXT
+    log               TEXT,
+    scheduled_for TIMESTAMPTZ,
+    CONSTRAINT uq_job_scheduled_slot UNIQUE (job_definition_id, scheduled_for)
 );
 
 -- Indexes
@@ -193,3 +199,23 @@ CREATE INDEX IF NOT EXISTS idx_feature_definition_group ON feature_store.feature
 CREATE INDEX IF NOT EXISTS idx_feature_values_online_feature ON feature_store.feature_values_online (feature_id);
 CREATE INDEX IF NOT EXISTS idx_model_version_model ON model_registry.model_version (model_id);
 CREATE INDEX IF NOT EXISTS idx_job_run_job ON jobs.job_run (job_definition_id);
+
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_model_one_production ON model_registry.model_version(model_id) WHERE stage = 'Production';
+CREATE TABLE IF NOT EXISTS model_registry.drift_baseline (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), model_version_id UUID NOT NULL REFERENCES model_registry.model_version(id),
+    window_start TIMESTAMPTZ NOT NULL, window_end TIMESTAMPTZ NOT NULL, distributions JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_drift_baseline_model_version_id ON model_registry.drift_baseline(model_version_id);
+CREATE TABLE IF NOT EXISTS model_registry.inference_observation (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), model_version_id UUID NOT NULL REFERENCES model_registry.model_version(id),
+    entity_key VARCHAR(120) NOT NULL, observed_at TIMESTAMPTZ NOT NULL DEFAULT now(), values_json JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_inference_version_time ON model_registry.inference_observation(model_version_id, observed_at);
+CREATE TABLE IF NOT EXISTS model_registry.drift_run (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), model_version_id UUID NOT NULL REFERENCES model_registry.model_version(id),
+    baseline_id UUID REFERENCES model_registry.drift_baseline(id), window_start TIMESTAMPTZ NOT NULL, window_end TIMESTAMPTZ NOT NULL,
+    status VARCHAR(40) NOT NULL, result_json JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_drift_run_model_version_id ON model_registry.drift_run(model_version_id);

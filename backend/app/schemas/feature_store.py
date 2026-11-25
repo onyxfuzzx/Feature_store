@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 from pydantic import Field, field_validator, model_validator
 from app.services.validation import parse_rules
@@ -7,11 +7,11 @@ from app.schemas.common import ORMBase
 
 
 class FeatureGroupCreate(ORMBase):
-    name: str
+    name: str = Field(min_length=1, max_length=120, pattern=r"^[^/:]+$")
     description: str | None = None
     owner_id: UUID | None = None
     tags_json: str | None = None
-    environment: str = "dev"
+    environment: str = Field(default="dev", min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
 
 
 class FeatureGroupOut(ORMBase):
@@ -26,7 +26,7 @@ class FeatureGroupOut(ORMBase):
 
 class FeatureDefinitionCreate(ORMBase):
     group_id: UUID
-    name: str
+    name: str = Field(min_length=1, max_length=120, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     dtype: str
     description: str | None = None
     source_sql: str
@@ -99,8 +99,9 @@ class FeatureDefinitionUpdate(ORMBase):
 
 
 class BatchOnlineFeaturesRequest(ORMBase):
-    entity_keys: list[str]
-    features: list[str]  # feature IDs or names (e.g. 'customer_30d_spend' or 'group:name')
+    entity_keys: list[str] = Field(min_length=1, max_length=1000)
+    features: list[str] = Field(min_length=1, max_length=100)
+    environment: str | None = None
 
 
 class BatchOnlineFeaturesResponse(ORMBase):
@@ -114,10 +115,22 @@ class AsOfJoinObservation(ORMBase):
     entity_key: str
     event_time: datetime
 
+    @field_validator("event_time")
+    @classmethod
+    def normalize_time(cls, value):
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
 
 class AsOfJoinRequest(ORMBase):
-    observations: list[AsOfJoinObservation]
-    features: list[str]  # feature IDs or names
+    observations: list[AsOfJoinObservation] = Field(min_length=1, max_length=1000)
+    features: list[str] = Field(min_length=1, max_length=100)
+    environment: str | None = None
+
+    @model_validator(mode="after")
+    def bounded_join(self):
+        if len(self.observations) * len(self.features) > 10000:
+            raise ValueError("Join request exceeds 10000 feature-observation pairs")
+        return self
 
 
 class AsOfJoinResponse(ORMBase):
@@ -133,6 +146,11 @@ class StreamIngestRecord(ORMBase):
     value: str | None = None
     event_time: datetime | None = None
 
+    @field_validator("event_time")
+    @classmethod
+    def normalize_time(cls, value):
+        return AsOfJoinObservation.normalize_time(value) if value else None
+
     @model_validator(mode="after")
     def one_feature_reference(self):
         if bool(self.feature_id) == bool(self.feature_name):
@@ -143,10 +161,12 @@ class StreamIngestRecord(ORMBase):
 class StreamIngestRequest(ORMBase):
     records: list[StreamIngestRecord] = Field(min_length=1, max_length=10000)
     persist_offline: bool = True
+    environment: str | None = None
 
 
 class StreamIngestResponse(ORMBase):
     ingested_count: int
+    online_updated_count: int = 0
     success: bool
     timestamp: datetime
 

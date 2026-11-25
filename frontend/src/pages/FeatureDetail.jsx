@@ -24,6 +24,7 @@ export default function FeatureDetail() {
   const [materializations, setMaterializations] = useState([]);
   const [lineageGraph, setLineageGraph] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState("overview");
 
   // Materialize trigger
@@ -41,6 +42,7 @@ export default function FeatureDetail() {
   const loadData = async () => {
     try {
       setLoading(true);
+      setError(null);
       const [fData, matData, linData] = await Promise.all([
         fetchApi(`/features/${id}`),
         fetchApi(`/features/${id}/materializations`),
@@ -50,7 +52,7 @@ export default function FeatureDetail() {
       setMaterializations(matData);
       setLineageGraph(linData);
     } catch (err) {
-      console.error(err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -68,7 +70,7 @@ export default function FeatureDetail() {
       setRunResult(res);
       await loadData();
     } catch (err) {
-      alert("Materialization failed: " + err.message);
+      setError(err.message);
     } finally {
       setRunning(false);
     }
@@ -83,12 +85,12 @@ export default function FeatureDetail() {
         method: "POST",
         body: JSON.stringify({
           entity_keys: [testKey.trim()],
-          features: [feature.name],
+          features: [feature.id],
         }),
       });
       setTestResult(res);
     } catch (err) {
-      alert("Online test lookup failed: " + err.message);
+      setError(err.message);
     } finally {
       setTesting(false);
     }
@@ -101,13 +103,14 @@ export default function FeatureDetail() {
   if (!feature) {
     return (
       <div className="py-20 text-center text-sm text-zinc-500">
-        Feature definition not found. <Link to="/features" className="text-emerald-400">Return to catalog</Link>
+        <span role="alert">{error || "Feature definition not found."}</span> <Button onClick={loadData}>Retry</Button> <Link to="/features" className="text-emerald-400">Return to catalog</Link>
       </div>
     );
   }
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      {error && <div role="alert" className="text-rose-300">{error} <Button onClick={loadData}>Retry</Button></div>}
       {/* Top Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-zinc-800/80">
         <div>
@@ -133,7 +136,7 @@ export default function FeatureDetail() {
       </div>
 
       {runResult && (
-        <div className="p-4 rounded-xl bg-emerald-950/40 border border-emerald-800/50 text-emerald-300 text-xs flex items-center justify-between">
+        <div role={runResult.status === "success" ? "status" : "alert"} className={`p-4 rounded-xl border text-xs flex items-center justify-between ${runResult.status === "success" ? "bg-emerald-950/40 border-emerald-800/50 text-emerald-300" : "bg-rose-950/40 border-rose-800/50 text-rose-300"}`}>
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
             <span>

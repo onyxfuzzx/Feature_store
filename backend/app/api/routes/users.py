@@ -50,6 +50,9 @@ def create_user(
     if existing:
         raise HTTPException(status_code=409, detail="Email already exists")
 
+    role_rows = db.query(Role).filter(Role.name.in_(payload.roles)).all()
+    if not payload.roles or len(payload.roles) != len(set(payload.roles)) or len(role_rows) != len(payload.roles):
+        raise HTTPException(400, "Invalid role name")
     user = User(
         name=payload.name,
         email=payload.email,
@@ -57,17 +60,10 @@ def create_user(
         is_active=True,
     )
     db.add(user)
-    db.commit()
-    db.refresh(user)
-
-    role_rows = db.query(Role).filter(Role.name.in_(payload.roles)).all()
-    if len(role_rows) != len(payload.roles):
-        raise HTTPException(status_code=400, detail="Invalid role name")
+    db.flush()
 
     for role_row in role_rows:
         db.add(UserRole(user_id=user.id, role_id=role_row.id))
-
-    db.commit()
 
     log_audit(
         db=db,
@@ -76,8 +72,11 @@ def create_user(
         entity_type="user",
         entity_id=user.id,
         payload={"email": user.email, "roles": payload.roles},
+        commit=False,
     )
 
+    db.commit()
+    db.refresh(user)
     return UserOut(
         id=user.id,
         name=user.name,
