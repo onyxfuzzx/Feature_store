@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS feature_store.feature_definition (
     refresh_interval     VARCHAR(40) NOT NULL,
     status               VARCHAR(40) NOT NULL DEFAULT 'draft',
     validation_rules_json TEXT,
+    online_revision      BIGINT NOT NULL DEFAULT 0,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

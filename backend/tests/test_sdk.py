@@ -56,10 +56,10 @@ def test_sdk_client_dry_run_and_lineage(client, admin_token):
 
     # Features & lineage
     feats = sdk_client.list_features()
-    if feats:
-        lin = sdk_client.get_feature_lineage(str(feats[0]["id"]))
-        assert "nodes" in lin
-        assert "edges" in lin
+    assert feats, "Required fixture data is missing"
+    lin = sdk_client.get_feature_lineage(str(feats[0]["id"]))
+    assert "nodes" in lin
+    assert "edges" in lin
 
 
 def test_sdk_client_hydrate_and_predict(client, admin_token):
@@ -68,12 +68,12 @@ def test_sdk_client_hydrate_and_predict(client, admin_token):
         token=admin_token,
         session=client
     )
-    models = sdk_client.list_models()
-    if models:
-        m_id = str(models[0]["id"])
-        hyd = sdk_client.hydrate_model_features(m_id, entity_keys=["cust_001"])
-        assert "hydrated_records" in hyd
+    models = [model for model in sdk_client.list_models() if model["name"] == "Churn Predictor"]
+    assert models, "Required fixture data is missing"
+    m_id = str(models[0]["id"])
+    hyd = sdk_client.hydrate_model_features(m_id, entity_keys=["cust_001"])
+    assert "hydrated_records" in hyd
 
-        pred = sdk_client.predict(m_id, entity_key="cust_001", runtime_features={"cart_size": 2})
-        assert "prediction" in pred
-        assert "probability" in pred["prediction"]
+    pred = sdk_client.predict(m_id, entity_key="cust_001", runtime_features={})
+    assert "prediction" in pred
+    assert "probability" in pred["prediction"]

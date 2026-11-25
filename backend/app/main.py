@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -8,7 +9,16 @@ from app.jobs.scheduler import start_scheduler, stop_scheduler
 
 configure_logging()
 
-app = FastAPI(title=settings.app_name, version="0.1.0")
+@asynccontextmanager
+async def lifespan(app):
+    if settings.scheduler_enabled:
+        start_scheduler()
+    yield
+    if settings.scheduler_enabled:
+        stop_scheduler()
+
+
+app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,16 +37,6 @@ app.include_router(search.router)
 app.include_router(jobs.router)
 app.include_router(users.router)
 app.include_router(dashboard.router)
-
-
-@app.on_event("startup")
-def startup_event():
-    start_scheduler()
-
-
-@app.on_event("shutdown")
-def shutdown_event():
-    stop_scheduler()
 
 
 @app.get("/")

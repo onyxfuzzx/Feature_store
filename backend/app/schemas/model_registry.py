@@ -1,5 +1,6 @@
 from datetime import datetime
 from uuid import UUID
+from pydantic import field_validator
 
 from app.schemas.common import ORMBase
 
@@ -26,6 +27,13 @@ class ModelVersionCreate(ORMBase):
     metrics_json: str | None = None
     params_json: str | None = None
     artifact_uri: str | None = None
+
+    @field_validator("artifact_uri")
+    @classmethod
+    def require_upload(cls, value):
+        if value is not None:
+            raise ValueError("Use the artifact upload endpoint; arbitrary artifact URIs are not accepted")
+        return value
 
 
 class ModelVersionOut(ORMBase):

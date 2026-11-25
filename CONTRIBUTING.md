@@ -13,10 +13,15 @@ Thank you for your interest in contributing! We welcome contributions to the cor
    ```
 2. Install dependencies:
    ```bash
-   pip install -r requirements.txt
+   pip install -r requirements-test.txt
    pip install -e ../sdk
    ```
-3. Run tests:
+3. Start the disposable PostgreSQL and Redis services from the repository root, then run tests:
+   ```bash
+   docker compose -p featureops-p0-test -f docker-compose.test.yml up -d --wait
+   ```
+   Tests use a dedicated database ending in `_test`, migrate it and create fixtures, and never use the application database in `backend/.env`. See [P0 operation and verification](docs/P0_IMPLEMENTATION.md) for connection overrides.
+
    ```bash
    pytest tests/ -v
    ```

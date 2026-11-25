@@ -27,6 +27,8 @@ export default function ModelDetail() {
   const [versions, setVersions] = useState([]);
   const [driftData, setDriftData] = useState(null);
   const [lineageGraph, setLineageGraph] = useState(null);
+  const [history, setHistory] = useState(null);
+  const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("versions");
 
@@ -56,6 +58,7 @@ export default function ModelDetail() {
 
   const loadData = async () => {
     try {
+      setError(null);
       setLoading(true);
       const [m, v, d, lin] = await Promise.all([
         fetchApi(`/models/${id}`),
@@ -68,9 +71,18 @@ export default function ModelDetail() {
       setDriftData(d);
       setLineageGraph(lin);
     } catch (err) {
-      console.error(err);
+      setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const showHistory = async (version) => {
+    try {
+      const detail = await fetchApi(`/models/versions/${version.id}/detail`);
+      setHistory({ version: version.version, rows: detail.stage_history });
+    } catch (err) {
+      setError(err.message);
     }
   };
 
@@ -83,7 +95,7 @@ export default function ModelDetail() {
         method: "POST",
         body: JSON.stringify({
           entity_key: predictKey,
-          runtime_features: { request_channel: "web_app", cart_size: 4 },
+          runtime_features: {},
         }),
       });
       setPredictResult(res);
@@ -103,12 +115,13 @@ export default function ModelDetail() {
     if (!selectedVersion) return;
     setPromoting(true);
     try {
-      await fetchApi(`/models/versions/${selectedVersion.id}/stage`, {
-        method: "PUT",
-        body: JSON.stringify({ stage: promoteStage }),
+      await fetchApi(`/models/${id}/versions/${selectedVersion.id}/stage`, {
+        method: "POST",
+        body: JSON.stringify({ to_stage: promoteStage }),
       });
       setShowPromoteModal(false);
       await loadData();
+      await showHistory(selectedVersion);
     } catch (err) {
       alert(err.message);
     } finally {
@@ -178,6 +191,15 @@ export default function ModelDetail() {
       </div>
 
       {/* Tabs */}
+      {error && <div role="alert" className="text-rose-300 text-sm">{error}</div>}
+      <Modal isOpen={history !== null} title={`Stage History - v${history?.version || ""}`} onClose={() => setHistory(null)}>
+        {history?.rows.length === 0 && <p>No stage transitions recorded.</p>}
+        <ul className="space-y-2 text-xs">
+          {history?.rows.map((row) => <li key={row.id}>
+            {row.from_stage} → {row.to_stage} <span className="text-zinc-400">{row.changed_at}</span>
+          </li>)}
+        </ul>
+      </Modal>
       <div className="flex gap-2 border-b border-zinc-800/80">
         {[
           { key: "versions", label: `Versions (${versions.length})` },
@@ -239,6 +261,7 @@ export default function ModelDetail() {
                       {v.created_at ? v.created_at.slice(0, 10) : "N/A"}
                     </td>
                     <td className="py-3 px-4 text-right">
+                      <Button variant="secondary" size="sm" onClick={() => showHistory(v)}>History</Button>
                       {canEdit && (
                         <Button
                           variant="secondary"

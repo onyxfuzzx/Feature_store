@@ -37,7 +37,9 @@ def _run_job(job_id):
             feature_id = payload.get("feature_id")
             if not feature_id:
                 raise ValueError("Job payload missing feature_id")
-            materialize_feature(db, feature_id)
+            materialization = materialize_feature(db, feature_id)
+            if materialization.status != "success":
+                raise ValueError(materialization.error_message or "Feature materialization failed")
         else:
             raise ValueError(f"Unsupported job type: {job.type}")
 

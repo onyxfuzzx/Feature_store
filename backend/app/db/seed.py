@@ -9,11 +9,11 @@ from app.core.security import hash_password
 from app.db.models.core import Role, User, UserRole
 from app.db.models.feature_store import FeatureDefinition, FeatureGroup
 from app.db.models.jobs import JobDefinition
-from app.db.models.model_registry import Model, ModelStageHistory, ModelVersion
+from app.db.models.model_registry import Model, ModelStageHistory, ModelVersion, ModelLineage
 from app.db.session import SessionLocal
 
 
-def seed() -> None:
+def seed(include_demo: bool = True) -> None:
     db = SessionLocal()
     try:
         roles = [ADMIN, ML_ENGINEER, DATA_SCIENTIST, ANALYST]
@@ -54,6 +54,9 @@ def seed() -> None:
                 """
             )
         )
+        db.commit()
+        if not include_demo:
+            return
         db.execute(
             text(
                 """
@@ -118,14 +121,25 @@ def seed() -> None:
             version = ModelVersion(
                 model_id=model.id,
                 version="1.0",
-                stage="Staging",
+                stage="Production",
                 metrics_json=json.dumps({"roc_auc": 0.92, "precision": 0.86}),
                 params_json=json.dumps({"max_depth": 6, "n_estimators": 250}),
-                artifact_uri="s3://featureops/models/churn/1.0/model.pkl",
             )
             db.add(version)
             db.commit()
             db.refresh(version)
+            from uuid import uuid4
+            from app.services.artifacts import artifact_path
+            version.artifact_uri = f"artifact://{model.id}/{version.id}/{uuid4()}"
+            path = artifact_path(version.artifact_uri, model.id, version.id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({
+                "format": "featureops.linear.v1", "task": "binary_classification",
+                "inputs": [{"name": feature.name, "feature_id": str(feature.id), "dtype": "float"}],
+                "coefficients": [0.01], "intercept": -1.0, "classes": [0, 1],
+            }))
+            db.add(ModelLineage(model_version_id=version.id, feature_ids_json=json.dumps([str(feature.id)])))
+            db.commit()
 
         if not db.query(ModelStageHistory).first():
             history = ModelStageHistory(

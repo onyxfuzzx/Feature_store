@@ -1,5 +1,7 @@
 # Enterprise Feature Store & Model Registry: End-to-End Architectural Blueprint (A to Z)
 
+> Implementation status: P0 corrections are implemented and verified; see [P0 operation guide](P0_IMPLEMENTATION.md). Broader P1/P2 work remains. Executable serving currently supports registered JSON linear/logistic models.
+
 ---
 
 ## 1. Executive Summary

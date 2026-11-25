@@ -1,5 +1,5 @@
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -41,7 +41,9 @@ from app.schemas.feature_store import (
     LineageNode,
     LineageEdge,
 )
-from app.services.materialization import materialize_feature
+from app.services.materialization import materialize_feature, write_offline_values
+from app.services.validation import parse_rules, validate_value
+from app.services.source_queries import execute_source_query
 from app.services.audit import log_audit
 from app.services.online_store import get_online_store
 
@@ -458,74 +460,32 @@ def stream_ingest(
     """
     Push streaming events into the online store in real time, with optional offline history write.
     """
-    now = datetime.utcnow()
-    ingested = 0
-
+    now = datetime.now(timezone.utc)
+    records = []
     for record in payload.records:
-        feat = None
         if record.feature_id:
             feat = db.get(FeatureDefinition, record.feature_id)
-        elif record.feature_name:
-            feat = db.query(FeatureDefinition).filter(FeatureDefinition.name == record.feature_name).first()
-
-        if not feat:
-            continue
-
-        evt_time = record.event_time or now
-
-        online_entry = (
-            db.query(FeatureValueOnline)
-            .filter(
-                FeatureValueOnline.entity_key == record.entity_key,
-                FeatureValueOnline.feature_id == feat.id,
-            )
-            .first()
-        )
-        if online_entry:
-            online_entry.value = record.value
-            online_entry.event_time = evt_time
-            online_entry.updated_at = now
         else:
-            online_entry = FeatureValueOnline(
-                entity_key=record.entity_key,
-                feature_id=feat.id,
-                value=record.value,
-                event_time=evt_time,
-                updated_at=now,
-            )
-            db.add(online_entry)
-
-        if payload.persist_offline:
-            offline_entry = FeatureValueOffline(
-                entity_key=record.entity_key,
-                feature_id=feat.id,
-                value=record.value,
-                event_time=evt_time,
-                updated_at=now,
-            )
-            db.add(offline_entry)
-
-        ingested += 1
-
-    db.commit()
-
-    # Mirror to configured online store cache
+            candidates = db.query(FeatureDefinition).filter(FeatureDefinition.name == record.feature_name).all()
+            if len(candidates) > 1:
+                raise HTTPException(422, "Ambiguous feature name; use feature_id")
+            feat = candidates[0] if candidates else None
+        if not feat:
+            raise HTTPException(422, "Unknown feature reference")
+        errors = validate_value(record.value, parse_rules(feat.validation_rules_json), feat.dtype)
+        if errors:
+            raise HTTPException(422, f"Validation rejected {record.entity_key}: {', '.join(errors)}")
+        records.append({"entity_key": record.entity_key, "feature_id": feat.id,
+                        "value": record.value, "event_time": record.event_time or now, "updated_at": now})
     try:
-        online_store = get_online_store()
-        cache_records = [
-            {"entity_key": r.entity_key, "feature_id": r.feature_id, "value": r.value, "event_time": r.event_time}
-            for r in payload.records if r.feature_id
-        ]
-        if cache_records:
-            online_store.write_online_features(cache_records, db)
+        if payload.persist_offline:
+            write_offline_values(db, records)
+        get_online_store().write_online_features(records, db)
+        db.commit()
     except Exception:
-        pass
-
-    return StreamIngestResponse(
-        ingested_count=ingested,
-        success=True,
-        timestamp=now,
-    )
+        db.rollback()
+        raise
+    return StreamIngestResponse(ingested_count=len(records), success=True, timestamp=now)
 
 
 @router.post(
@@ -541,43 +501,16 @@ def dry_run_query(
     Safely executes an exploratory SQL query with a row limit to preview feature transformations.
     Restricts destructive DDL/DML keywords.
     """
-    cleaned = payload.query.strip().rstrip(";")
-    upper_q = cleaned.upper()
-    disallowed = ["DROP ", "DELETE ", "UPDATE ", "INSERT ", "ALTER ", "TRUNCATE ", "GRANT ", "REVOKE "]
-    if any(kw in upper_q for kw in disallowed):
-        return QueryDryRunResponse(
-            is_valid=False,
-            error="Only read-only SELECT queries are allowed for feature transformations.",
-        )
-
-    limited_query = f"SELECT * FROM ({cleaned}) AS subq LIMIT {min(payload.limit, 50)}"
     start = time.perf_counter()
     try:
-        result = db.execute(text(limited_query))
-        columns = list(result.keys())
-        raw_rows = result.fetchall()
-        rows = [
-            {col: (str(val) if val is not None else None) for col, val in zip(columns, row)}
-            for row in raw_rows
-        ]
-        elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
-        return QueryDryRunResponse(
-            columns=columns,
-            rows=rows,
-            row_count=len(rows),
-            execution_time_ms=elapsed_ms,
-            is_valid=True,
-        )
-    except Exception as e:
-        elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
-        return QueryDryRunResponse(
-            columns=[],
-            rows=[],
-            row_count=0,
-            execution_time_ms=elapsed_ms,
-            is_valid=False,
-            error=str(e),
-        )
+        columns, raw_rows = execute_source_query(payload.query, payload.limit)
+        rows = [{col: (str(value) if value is not None else None) for col, value in row.items()}
+                for row in raw_rows]
+        return QueryDryRunResponse(columns=columns, rows=rows, row_count=len(rows),
+                                   execution_time_ms=round((time.perf_counter() - start) * 1000, 2))
+    except Exception as exc:
+        return QueryDryRunResponse(is_valid=False, error=str(exc),
+                                   execution_time_ms=round((time.perf_counter() - start) * 1000, 2))
 
 
 @router.get(

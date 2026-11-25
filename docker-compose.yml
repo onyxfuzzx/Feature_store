@@ -1,57 +1,77 @@
-version: "3.9"
+x-backend: &backend
+  image: featureops-backend:local
+  build: ./backend
+  environment: &backend-environment
+    APP_ENV: ${APP_ENV:-local}
+    DATABASE_URL: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:?Generate .env.docker first}@db:5432/feature_store
+    SOURCE_DATABASE_URL: postgresql+psycopg2://featureops_source:${SOURCE_DB_PASSWORD:?Generate .env.docker first}@db:5432/feature_store
+    JWT_SECRET: ${JWT_SECRET:?Generate .env.docker first}
+    ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@featureops.local}
+    ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Generate .env.docker first}
+    CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+    ONLINE_STORE_BACKEND: redis
+    REDIS_URL: redis://redis:6379/0
+    ARTIFACT_STORAGE_DIR: /app/storage/artifacts
+    SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+  volumes:
+    - artifacts:/app/storage/artifacts
 
 services:
-  # Supabase / PostgreSQL Database
   db:
     image: postgres:16-alpine
-    container_name: featureops_db
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Your_password123}
-      POSTGRES_DB: ${POSTGRES_DB:-feature_store}
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Generate .env.docker first}
+      POSTGRES_DB: feature_store
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "pg_isready -U postgres -d feature_store"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
-  # Redis (Optional Low-Latency Online Store)
   redis:
     image: redis:7-alpine
-    container_name: featureops_redis
-    ports:
-      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
 
-  # FastAPI Backend
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: featureops_backend
-    environment:
-      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-Your_password123}@db:5432/${POSTGRES_DB:-feature_store}
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
-      CORS_ORIGINS: "*"
-    ports:
-      - "8000:8000"
+  bootstrap:
+    <<: *backend
+    command: ["python", "-m", "app.db.bootstrap"]
     depends_on:
       db:
         condition: service_healthy
 
-  # Frontend Client
+  backend:
+    <<: *backend
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
-    container_name: featureops_frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-/api}
     ports:
-      - "5173:80"
+      - "${FRONTEND_PORT:-5173}:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pg_data:
+  artifacts:

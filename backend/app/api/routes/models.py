@@ -1,7 +1,6 @@
 import json
 import math
 import os
-import shutil
 import time
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -34,7 +33,8 @@ from app.schemas.feature_store import LineageGraphOut, LineageNode, LineageEdge
 from app.services.audit import log_audit
 from app.services.online_store import get_online_store
 
-ARTIFACT_STORAGE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "storage", "artifacts"))
+from app.services.artifacts import artifact_path, store_artifact
+from app.services.model_runtime import load_model, hydrate, score
 
 
 router = APIRouter(prefix="/models", tags=["models"])
@@ -452,32 +452,17 @@ def upload_model_artifact(
     if not version or version.model_id != model_id:
         raise HTTPException(status_code=404, detail="Model version not found")
 
-    target_dir = os.path.join(ARTIFACT_STORAGE_DIR, str(model_id), str(version_id))
-    os.makedirs(target_dir, exist_ok=True)
-
-    dest_path = os.path.join(target_dir, file.filename)
-    with open(dest_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    version.artifact_uri = f"file://{dest_path}"
-    db.commit()
-    db.refresh(version)
-
-    log_audit(
-        db=db,
-        actor_id=current_user.id,
-        action="UPLOAD_MODEL_ARTIFACT",
-        entity_type="model_version",
-        entity_id=str(version.id),
-        payload={"filename": file.filename, "size_bytes": os.path.getsize(dest_path)},
-    )
-
-    return {
-        "status": "success",
-        "filename": file.filename,
-        "artifact_uri": version.artifact_uri,
-        "size_bytes": os.path.getsize(dest_path),
-    }
+    uri, path, size = store_artifact(file, model_id, version_id)
+    try:
+        version.artifact_uri = uri
+        db.commit()
+    except Exception:
+        db.rollback()
+        path.unlink(missing_ok=True)
+        raise
+    log_audit(db, current_user.id, "UPLOAD_MODEL_ARTIFACT", "model_version", str(version.id),
+              {"filename": file.filename, "size_bytes": size})
+    return {"status": "success", "filename": file.filename, "artifact_uri": uri, "size_bytes": size}
 
 
 @router.get(
@@ -496,15 +481,10 @@ def download_model_artifact(
     if not version or version.model_id != model_id:
         raise HTTPException(status_code=404, detail="Model version not found")
 
-    if not version.artifact_uri:
-        raise HTTPException(status_code=404, detail="No artifact registered for this version")
-
-    file_path = version.artifact_uri.replace("file://", "")
-    if not os.path.isfile(file_path):
-        raise HTTPException(status_code=404, detail="Artifact file not found on storage")
-
-    filename = os.path.basename(file_path)
-    return FileResponse(path=file_path, filename=filename, media_type="application/octet-stream")
+    path = artifact_path(version.artifact_uri, model_id, version_id)
+    if not path.is_file():
+        raise HTTPException(404, "Artifact file not found on storage")
+    return FileResponse(path=path, filename=f"model-{version.version}.bin", media_type="application/octet-stream")
 
 
 @router.get(
@@ -601,144 +581,44 @@ def get_model_lineage_graph(
     return LineageGraphOut(nodes=nodes, edges=edges)
 
 
-@router.post(
-    "/{model_id}/hydrate",
-    response_model=ModelHydrateResponse,
-    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
-)
-def hydrate_model_features(
-    model_id: UUID,
-    payload: ModelHydrateRequest,
-    db: Session = Depends(get_db),
-):
-    """
-    Online Feature Hydration: Pulls all registered features for given entities in sub-10ms.
-    """
-    start_time = time.perf_counter()
-    model = db.get(Model, model_id)
-    if not model:
-        raise HTTPException(status_code=404, detail="Model not found")
-
-    # Select target version: requested, or active Production, or latest
-    version_query = db.query(ModelVersion).filter(ModelVersion.model_id == model_id)
-    if payload.version:
-        version = version_query.filter(ModelVersion.version == payload.version).first()
+def serving_version(db, model_id, requested_version):
+    if not db.get(Model, model_id):
+        raise HTTPException(404, "Model not found")
+    query = db.query(ModelVersion).filter(ModelVersion.model_id == model_id)
+    if requested_version:
+        version = query.filter(ModelVersion.version == requested_version).first()
     else:
-        version = version_query.filter(ModelVersion.stage == "Production").first()
-        if not version:
-            version = version_query.order_by(ModelVersion.created_at.desc()).first()
-
+        version = query.filter(ModelVersion.stage == "Production").order_by(ModelVersion.created_at.desc()).first()
     if not version:
-        raise HTTPException(status_code=404, detail="No model version available to hydrate")
-
-    # Resolve features
-    feature_names = []
-    feature_id_map = {}
-
-    lineages = db.query(ModelLineage).filter(ModelLineage.model_version_id == version.id).all()
-    for lin in lineages:
-        if lin.feature_ids_json:
-            try:
-                raw_feats = json.loads(lin.feature_ids_json)
-            except Exception:
-                raw_feats = [f.strip() for f in lin.feature_ids_json.split(",") if f.strip()]
-            for item in raw_feats:
-                feat = None
-                try:
-                    feat = db.get(FeatureDefinition, UUID(item))
-                except Exception:
-                    pass
-                if not feat:
-                    feat = db.query(FeatureDefinition).filter(FeatureDefinition.name == str(item)).first()
-                if feat:
-                    feature_names.append(feat.name)
-                    feature_id_map[feat.id] = feat.name
-
-    # If no explicit features linked, default to all active feature definitions
-    if not feature_id_map:
-        all_feats = db.query(FeatureDefinition).limit(5).all()
-        for feat in all_feats:
-            feature_names.append(feat.name)
-            feature_id_map[feat.id] = feat.name
-
-    online_store = get_online_store()
-    raw_vals = online_store.get_online_features(payload.entity_keys, feature_id_map, db)
-
-    hydrated_records = []
-    for ek in payload.entity_keys:
-        rec = {"entity_key": ek}
-        for f_name in feature_names:
-            rec[f_name] = raw_vals.get(ek, {}).get(f_name)
-        hydrated_records.append(rec)
-
-    latency_ms = round((time.perf_counter() - start_time) * 1000, 3)
-
-    return ModelHydrateResponse(
-        model_id=model.id,
-        version=version.version,
-        features=feature_names,
-        hydrated_records=hydrated_records,
-        latency_ms=latency_ms,
-    )
+        raise HTTPException(404, "Requested version unavailable; specify a version or promote one to Production")
+    return version
 
 
 @router.post(
-    "/{model_id}/predict",
-    response_model=ModelPredictResponse,
+    "/{model_id}/hydrate", response_model=ModelHydrateResponse,
     dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
 )
-def predict_with_model(
-    model_id: UUID,
-    payload: ModelPredictRequest,
-    db: Session = Depends(get_db),
-):
-    """
-    Real-Time Model Inference Proxy:
-    Automatically hydrates online features for entity_key, merges runtime features,
-    and runs inference scoring.
-    """
-    start_time = time.perf_counter()
-    hydrate_res = hydrate_model_features(
-        model_id=model_id,
-        payload=ModelHydrateRequest(entity_keys=[payload.entity_key], version=payload.version),
-        db=db,
-    )
-
-    hydrated_data = hydrate_res.hydrated_records[0] if hydrate_res.hydrated_records else {}
-    features_used = {k: v for k, v in hydrated_data.items() if k != "entity_key"}
-    # Merge any client runtime features passed with request
-    for rk, rv in payload.runtime_features.items():
-        features_used[rk] = str(rv)
-
-    # Calculate real-time prediction score
-    numeric_sum = 0.0
-    for v in features_used.values():
-        if v is not None:
-            try:
-                numeric_sum += float(v)
-            except (ValueError, TypeError):
-                numeric_sum += 1.0
-
-    # Standard Sigmoid logistic probability
-    prob = 1.0 / (1.0 + math.exp(-0.01 * (numeric_sum - 10.0)))
-    prob = round(prob, 4)
-    pred_class = 1 if prob >= 0.5 else 0
-
-    latency_ms = round((time.perf_counter() - start_time) * 1000, 3)
-
-    return ModelPredictResponse(
-        model_id=model_id,
-        version=hydrate_res.version,
-        entity_key=payload.entity_key,
-        features_used=features_used,
-        prediction={
-            "probability": prob,
-            "prediction_class": pred_class,
-            "label": "High Risk / Positive" if pred_class == 1 else "Normal / Negative",
-            "model_version": hydrate_res.version,
-        },
-        latency_ms=latency_ms,
-    )
+def hydrate_model_features(model_id: UUID, payload: ModelHydrateRequest, db: Session = Depends(get_db)):
+    start = time.perf_counter()
+    version = serving_version(db, model_id, payload.version)
+    artifact = load_model(version, db)
+    records = hydrate(artifact, payload.entity_keys, db)
+    return ModelHydrateResponse(model_id=model_id, version=version.version,
+                                features=[item.name for item in artifact.inputs], hydrated_records=records,
+                                latency_ms=round((time.perf_counter() - start) * 1000, 3))
 
 
-
+@router.post(
+    "/{model_id}/predict", response_model=ModelPredictResponse,
+    dependencies=[Depends(require_roles(roles.ADMIN, roles.ML_ENGINEER, roles.DATA_SCIENTIST, roles.ANALYST))],
+)
+def predict_with_model(model_id: UUID, payload: ModelPredictRequest, db: Session = Depends(get_db)):
+    start = time.perf_counter()
+    version = serving_version(db, model_id, payload.version)
+    artifact = load_model(version, db)
+    record = hydrate(artifact, [payload.entity_key], db)[0]
+    used, prediction = score(artifact, record, payload.runtime_features)
+    prediction["model_version"] = version.version
+    return ModelPredictResponse(model_id=model_id, version=version.version, entity_key=payload.entity_key,
+                                 features_used=used, prediction=prediction,
+                                 latency_ms=round((time.perf_counter() - start) * 1000, 3))

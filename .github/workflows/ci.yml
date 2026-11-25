@@ -8,8 +8,25 @@ on:
 
 jobs:
   backend-test:
-    name: Backend Tests & Lint
+    name: Backend Integration Tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: featureops_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-test-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d featureops_test"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg2://postgres:isolated-test-password@localhost:5432/featureops_test
+      TEST_REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
 
@@ -21,7 +38,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt
+          pip install -r backend/requirements-test.txt
           pip install -e sdk/
 
       - name: Run Pytest Suite
@@ -49,3 +66,37 @@ jobs:
         run: |
           cd frontend
           npm run build
+
+  stack-smoke:
+    name: Fresh Stack and Browser Workflows
+    runs-on: ubuntu-latest
+    env:
+      P0_BASE_URL: http://localhost:5173
+      P0_ENV_FILE: ../.env.docker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Start fresh stack
+        run: |
+          python scripts/configure-docker.py
+          docker compose --env-file .env.docker up --build -d --wait
+      - name: Verify browser workflows
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm run test:e2e
+      - name: Verify artifact persistence after container replacement
+        run: |
+          pip install httpx
+          python scripts/verify-p0-stack.py before --env-file .env.docker --url http://localhost:5173/api
+          docker compose --env-file .env.docker up -d --no-deps --force-recreate backend --wait
+          python scripts/verify-p0-stack.py after --env-file .env.docker --url http://localhost:5173/api
+      - name: Stop verification stack
+        if: always()
+        run: docker compose --env-file .env.docker down -v

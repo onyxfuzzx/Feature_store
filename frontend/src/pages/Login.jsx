@@ -25,11 +25,6 @@ export default function Login() {
     }
   };
 
-  const handleFillDemo = () => {
-    setEmail("admin@featureops.local");
-    setPassword("ChangeMe123!");
-  };
-
   return (
     <div className="min-h-screen bg-zinc-950 flex flex-col justify-center items-center px-4 relative overflow-hidden">
       {/* Background glow */}
@@ -95,16 +90,6 @@ export default function Login() {
             </Button>
           </form>
 
-          {/* Quick Demo Fill button */}
-          <div className="mt-6 pt-5 border-t border-zinc-800/80 text-center">
-            <button
-              type="button"
-              onClick={handleFillDemo}
-              className="text-xs text-zinc-400 hover:text-emerald-400 transition font-mono underline underline-offset-4"
-            >
-              Fill default admin credentials
-            </button>
-          </div>
         </div>
       </div>
     </div>

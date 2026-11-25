@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, text
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -25,6 +25,7 @@ class FeatureDefinition(Base):
     __table_args__ = {"schema": "feature_store"}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    online_revision = Column(BigInteger, nullable=False, server_default=text("0"))
     group_id = Column(
         UUID(as_uuid=True), ForeignKey("feature_store.feature_group.id"), nullable=False
     )

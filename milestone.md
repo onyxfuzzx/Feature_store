@@ -1,5 +1,7 @@
 # Project Roadmap & Production Milestones
 
+> Implementation status: P0 corrections are implemented and verified; see [P0 operation guide](docs/P0_IMPLEMENTATION.md). Broader P1/P2 work remains. Executable serving currently supports registered JSON linear/logistic models.
+
 This document details the comprehensive audit, gaps identified, architectural requirements, and milestone plan to transition the **Feature Store & Model Registry** into an enterprise-grade, open-source project with a redesigned, professional UI.
 
 ---
